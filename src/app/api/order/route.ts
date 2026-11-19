@@ -25,9 +25,12 @@ export async function POST(req: Request) {
     if (plate && (await db.vehicle.findUnique({ where: { plate } }))) {
       return NextResponse.json({ ok: false, error: "This plate is already registered." }, { status: 409 });
     }
-    // Reserve a QR code atomically: create the order inside a transaction
-    // and retry once if another order took the same code at the same time.
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // Reserve a QR code atomically: create the order inside a transaction.
+    // Two orders at the same moment can pick the same free code, or SQLite
+    // can lock the database for one writer. Both are transient, so retry
+    // with a short backoff. The unique stickerCode and qrCodeId are the
+    // final guards, so two orders can never share a QR code.
+    for (let attempt = 0; attempt < 4; attempt++) {
       try {
         const order = await db.$transaction(async (tx) => {
           const qr = await tx.qrCode.findFirst({ where: { vehicleId: null, stickerOrder: null, status: "ACTIVE" }, orderBy: { code: "asc" } });
@@ -35,11 +38,18 @@ export async function POST(req: Request) {
           return tx.stickerOrder.create({
             data: { buyerName, buyerPhone, buyerEmail, deliveryAddress, plate, stickerCode: qr.code, pricePkr: product.pricePkr, paymentStatus: "UNPAID", orderStatus: "ORDERED", qrCodeId: qr.id },
           });
-        });
+        }, { timeout: 10000, maxWait: 5000 });
         if (!order) return NextResponse.json({ ok: false, error: "No QR stickers left in stock. Contact M-Park." }, { status: 503 });
         return NextResponse.json({ ok: true, orderId: order.id, stickerCode: order.stickerCode, pricePkr: product.pricePkr, productName: product.name });
       } catch (e) {
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && attempt === 0) continue;
+        const msg = e instanceof Error ? e.message : "";
+        const retryable =
+          (e instanceof Prisma.PrismaClientKnownRequestError && (e.code === "P2002" || e.code === "P2034")) ||
+          msg.includes("database is locked") || msg.includes("Transaction") || msg.includes("timed out");
+        if (retryable && attempt < 3) {
+          await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
+          continue;
+        }
         throw e;
       }
     }
