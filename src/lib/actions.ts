@@ -50,15 +50,15 @@ export async function adminAddCustomer(form: FormData): Promise<ActionResult> {
     if (year.error || year.value === null) return fail(year.error || "Year is required.");
     const phone = normalizePhone(phoneRaw);
     const plate = plateRaw;
-    const plan = await db.subscriptionPlan.findUnique({ where: { id: planId } });
-    if (!plan || !plan.isActive) return fail("Plan not found or inactive. Choose an active plan.");
-    if (await db.user.findUnique({ where: { phone } })) return fail("A customer with this phone already exists.");
-    if (await db.vehicle.findUnique({ where: { plate } })) return fail("This plate is already registered.");
-    const qr = await db.qrCode.findUnique({ where: { code: qrCode } });
-    if (!qr) return fail("QR code not found in inventory.");
-    if (qr.vehicleId) return fail("QR code is already assigned.");
-    if (qr.status !== "ACTIVE") return fail("That QR code is not active. Choose an active code.");
     await db.$transaction(async (tx) => {
+      const plan = await tx.subscriptionPlan.findUnique({ where: { id: planId } });
+      if (!plan || !plan.isActive) throw new Error("Plan not found or inactive. Choose an active plan.");
+      if (await tx.user.findUnique({ where: { phone } })) throw new Error("A customer with this phone already exists.");
+      if (await tx.vehicle.findUnique({ where: { plate } })) throw new Error("This plate is already registered.");
+      const qr = await tx.qrCode.findUnique({ where: { code: qrCode } });
+      if (!qr) throw new Error("QR code not found in inventory.");
+      if (qr.vehicleId) throw new Error("QR code is already assigned.");
+      if (qr.status !== "ACTIVE") throw new Error("That QR code is not active. Choose an active code.");
       const user = await tx.user.create({ data: { role: "CUSTOMER", name, phone } });
       const vehicle = await tx.vehicle.create({ data: { plate, make, model, year: year.value as number, color, ownerId: user.id } });
       await tx.qrCode.update({ where: { id: qr.id }, data: { vehicleId: vehicle.id, status: "ACTIVE", assignedAt: new Date() } });
@@ -69,7 +69,11 @@ export async function adminAddCustomer(form: FormData): Promise<ActionResult> {
       await tx.notification.create({ data: { userId: user.id, title: "Welcome to M-Park", body: `Your QR sticker ${qrCode} is active for ${plate}.` } });
     });
     return done("Customer added.", ["/admin/customers", "/admin", "/admin/vehicles", "/admin/qr-codes", "/admin/inventory", "/admin/subscriptions"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.startsWith("Plan not found") || msg.startsWith("A customer with") || msg.startsWith("This plate") || msg.startsWith("QR code")) return fail(msg);
+    return fail(prismaError(e));
+  }
 }
 
 export async function adminToggleBlock(userId: string, blocked: boolean): Promise<ActionResult> {
@@ -93,7 +97,9 @@ export async function adminQrStatus(qrId: string, status: "ACTIVE" | "INACTIVE" 
     if (!qr) return fail("That QR code no longer exists.");
     if (qr.status === status) return fail(`QR code is already ${status}.`);
     if (qr.vehicleId && status !== "ACTIVE") {
-      const activeSub = await db.subscription.findFirst({ where: { userId: qr.vehicle!.ownerId, status: "ACTIVE", endDate: { gt: new Date() } } });
+      const vehicle = await db.vehicle.findUnique({ where: { id: qr.vehicleId } });
+      if (!vehicle) return fail("That QR code is linked to a vehicle that no longer exists.");
+      const activeSub = await db.subscription.findFirst({ where: { userId: vehicle.ownerId, status: "ACTIVE", endDate: { gt: new Date() } } });
       if (activeSub) return fail("That sticker is linked to a vehicle with an active subscription. Remove the subscription first.");
     }
     await db.qrCode.update({ where: { id: qrId }, data: { status } });
@@ -277,7 +283,7 @@ export async function customerEmergencyDelete(): Promise<ActionResult> {
     const s = await requireCustomer();
     const existing = await db.emergencyContact.findUnique({ where: { userId: s.id } });
     if (!existing) return fail("No emergency contact to remove.");
-    await db.emergencyContact.deleteMany({ where: { userId: s.id } });
+    await db.emergencyContact.delete({ where: { userId: s.id } });
     return done("Emergency contact removed.", ["/customer/emergency"]);
   } catch (e) { return fail(prismaError(e)); }
 }

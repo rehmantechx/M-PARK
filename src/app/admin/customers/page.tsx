@@ -5,7 +5,7 @@ import { formatPkr } from "@/lib/validate";
 
 export default async function AdminCustomers({ searchParams }: { searchParams: Promise<{ q?: string; edit?: string }> }) {
   const params = await searchParams;
-  const q = (params.q || "").trim();
+  const q = (params.q || "").trim().slice(0, 100);
   const editId = (params.edit || "").trim();
   const qUpper = q.toUpperCase();
   const customers = await db.user.findMany({

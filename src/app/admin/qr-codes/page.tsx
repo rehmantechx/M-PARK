@@ -5,7 +5,7 @@ import { adminQrStatus } from "@/lib/actions";
 
 export default async function AdminQrCodes({ searchParams }: { searchParams: Promise<{ q?: string; status?: string }> }) {
   const params = await searchParams;
-  const q = (params.q || "").trim().toUpperCase();
+  const q = (params.q || "").trim().toUpperCase().slice(0, 100);
   const status = params.status === "ACTIVE" || params.status === "INACTIVE" || params.status === "LOST" ? params.status : "";
   const list = await db.qrCode.findMany({
     where: { ...(q ? { code: { contains: q } } : {}), ...(status ? { status } : {}) },
