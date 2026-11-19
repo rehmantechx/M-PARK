@@ -170,6 +170,41 @@ src/
   middleware.ts        Route protection for admin and customer areas
 ```
 
+## Security and production checklist
+
+This dashboard was hardened for production. The main guarantees are:
+
+- Sessions are JWTs signed with SESSION_SECRET, which must be at least
+  32 random characters in production. The server refuses to start in
+  production without one. Cookies are httpOnly, sameSite lax, and secure
+  in production. Passwords use bcrypt cost 12.
+- Every admin and customer page checks the session, the role, and the
+  blocked flag in the database. A customer can never open an admin page,
+  and a customer only ever sees their own vehicle, orders, requests,
+  and notifications. The owner phone number is never returned by any
+  API or rendered on any page.
+- OTP codes are stored as SHA-256 hashes, expire in 10 minutes, allow
+  5 attempts, and only the newest code works. A resend deletes older
+  codes. In production the code is only delivered by SMS, never shown
+  on screen and never written to a log.
+- All forms and APIs validate input on the server: phone and plate
+  formats, year, whole number money, and field lengths. Errors are
+  friendly messages, never stack traces or database details.
+- Rate limits: admin login 10 per 5 minutes, OTP 5 per hour per phone,
+  scan alert and call 10 per minute per QR code. All return 429.
+- Security headers are set in next.config.mjs: nosniff, frame deny,
+  referrer, and permissions policy.
+- Concurrent orders are queued in one process for SQLite, so two
+  orders can never share a QR code. On Postgres with several servers
+  this must become a database lock instead of the in-process mutex.
+- The in-memory rate limiter is single-server only. On a multi-server
+  deployment it must move to a shared store such as Redis.
+- Never run the seed script on a live database. It refuses to run when
+  NODE_ENV is production, and it wipes and reseeds test data.
+- Never reseed or delete the database file while the server is running.
+  Stop the server, reseed, then start it again, or the live Prisma
+  connection keeps pointing at the deleted file.
+
 ## Deployment notes
 
 Before launch, complete these steps:
