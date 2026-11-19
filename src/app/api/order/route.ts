@@ -3,6 +3,21 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { isValidPhone, isValidPlate, normalizePhone } from "@/lib/validate";
 
+// SQLite allows one writer at a time. Queue order reservations in this
+// process so concurrent orders do not time out waiting for the database.
+// On Postgres with several servers this must become a database lock,
+// for example SELECT ... FOR UPDATE on the QR row, instead of this mutex.
+let orderMutex: Promise<unknown> = Promise.resolve();
+
+function withOrderLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = orderMutex.then(fn, fn);
+  orderMutex = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -30,6 +45,7 @@ export async function POST(req: Request) {
     // can lock the database for one writer. Both are transient, so retry
     // with a short backoff. The unique stickerCode and qrCodeId are the
     // final guards, so two orders can never share a QR code.
+    return withOrderLock(async () => {
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         const order = await db.$transaction(async (tx) => {
@@ -43,9 +59,10 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true, orderId: order.id, stickerCode: order.stickerCode, pricePkr: product.pricePkr, productName: product.name });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "";
+        const lower = msg.toLowerCase();
         const retryable =
           (e instanceof Prisma.PrismaClientKnownRequestError && (e.code === "P2002" || e.code === "P2034")) ||
-          msg.includes("database is locked") || msg.includes("Transaction") || msg.includes("timed out");
+          lower.includes("database is locked") || lower.includes("transaction") || lower.includes("timeout");
         if (retryable && attempt < 3) {
           await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
           continue;
@@ -54,6 +71,7 @@ export async function POST(req: Request) {
       }
     }
     return NextResponse.json({ ok: false, error: "Could not reserve a QR sticker. Please try again." }, { status: 503 });
+    });
   } catch {
     return NextResponse.json({ ok: false, error: "Order failed. Please try again." }, { status: 500 });
   }
