@@ -10,7 +10,10 @@ export async function POST(req: Request) {
     const password = String(body.password || "");
     if (!email || !password) return NextResponse.json({ ok: false, error: "Email and password are required." }, { status: 400 });
     if (email.length > 100 || password.length > 100) return NextResponse.json({ ok: false, error: "Email and password are required." }, { status: 400 });
-    const ip = req.headers.get("x-forwarded-for") || "local";
+    // x-forwarded-for can hold a comma list and can be spoofed by a
+    // direct client, so use only the first entry and only as a rate
+    // limit key, never as an identity.
+    const ip = (req.headers.get("x-forwarded-for") || "local").split(",")[0].trim().slice(0, 45) || "local";
     if (rateLimited(`admin-login:${ip}:${email}`, 10, 5 * 60 * 1000)) {
       return NextResponse.json({ ok: false, error: "Too many login attempts. Wait 5 minutes and try again." }, { status: 429 });
     }

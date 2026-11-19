@@ -9,12 +9,15 @@ const COOKIE = "mpark_session";
 
 function secretKey() {
   const s = process.env.SESSION_SECRET;
-  if (!s && process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET is not set. Set a long random value in .env.");
+  if (process.env.NODE_ENV === "production") {
+    if (!s) throw new Error("SESSION_SECRET is not set. Set a long random value in .env.");
+    if (s.length < 32) throw new Error("SESSION_SECRET is too short. Use at least 32 random characters.");
+  }
   return new TextEncoder().encode(s || "dev-only-change-me");
 }
 
 export async function hashPassword(password: string) {
-  return bcrypt.hash(password, 10);
+  return bcrypt.hash(password, 12);
 }
 
 export async function checkPassword(password: string, hash: string) {
