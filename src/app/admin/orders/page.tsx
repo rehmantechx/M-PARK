@@ -6,15 +6,18 @@ import { formatPkr } from "@/lib/validate";
 const STATUSES = ["ORDERED", "PRINTED", "SHIPPED", "DELIVERED", "ACTIVATED"] as const;
 
 export default async function AdminOrders() {
-  const orders = await db.stickerOrder.findMany({ orderBy: { createdAt: "desc" }, take: 100 });
-  const product = await db.product.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" } });
-  const paidOrders = orders.filter((o) => o.paymentStatus === "PAID");
-  const totalRevenue = paidOrders.reduce((sum, o) => sum + o.pricePkr, 0);
+  const [orders, product, paidAgg] = await Promise.all([
+    db.stickerOrder.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
+    db.product.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" } }),
+    db.stickerOrder.aggregate({ _count: { _all: true }, _sum: { pricePkr: true }, where: { paymentStatus: "PAID" } }),
+  ]);
+  const paidOrders = paidAgg._count._all;
+  const totalRevenue = paidAgg._sum.pricePkr || 0;
   return (
     <div>
       <p className="text-slate-600">QR sticker sales. This is the core M-Park business: sell the sticker, confirm payment, ship it, then it is permanently linked to the vehicle after registration.</p>
       <div className="grid md:grid-cols-3 gap-4 mt-5">
-        <div className="card"><p className="text-3xl font-bold">{paidOrders.length}</p><p className="text-slate-600 text-sm">Total QR stickers sold (paid)</p><p className="text-slate-500 text-sm">{orders.length} orders in total</p></div>
+        <div className="card"><p className="text-3xl font-bold">{paidOrders}</p><p className="text-slate-600 text-sm">Total QR stickers sold (paid)</p><p className="text-slate-500 text-sm">{orders.length} orders in total</p></div>
         <div className="card"><p className="text-3xl font-bold">{formatPkr(totalRevenue)}</p><p className="text-slate-600 text-sm">Total revenue from sticker sales</p><p className="text-slate-500 text-sm">Paid orders only</p></div>
         <div className="card">
           <p className="text-3xl font-bold">{product ? formatPkr(product.pricePkr) : "-"}</p>

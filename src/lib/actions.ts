@@ -116,14 +116,32 @@ export async function adminGenerateBatch(form: FormData): Promise<ActionResult> 
     const batchNums = await db.qrCode.findMany({ select: { batch: true }, distinct: ["batch"] });
     let maxBatch = 0;
     for (const b of batchNums) { const m = b.batch.match(/^B-(\d+)$/); if (m) maxBatch = Math.max(maxBatch, Number(m[1])); }
-    const batch = `B-${String(maxBatch + 1).padStart(3, "0")}`;
-    const startNum = maxNum + 1;
-    await db.$transaction(async (tx) => {
-      for (let i = 0; i < n; i++) {
-        await tx.qrCode.create({ data: { code: `MPK-${startNum + i}`, batch, status: "ACTIVE" } });
+    // Retry once if another admin generated a batch at the same moment
+    // and took the same code numbers. The unique code constraint is the
+    // final guard, and the retry recomputes the next numbers.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) {
+        const fresh = await db.qrCode.findMany({ select: { code: true } });
+        for (const c of fresh) {
+          const m = c.code.match(/^MPK-(\d+)$/);
+          if (m) maxNum = Math.max(maxNum, Number(m[1]));
+        }
       }
-    });
-    return done(`${n} QR codes created in batch ${batch}.`, ["/admin/inventory", "/admin/qr-codes", "/admin"]);
+      const batch = `B-${String(maxBatch + 1 + attempt).padStart(3, "0")}`;
+      const startNum = maxNum + 1;
+      try {
+        await db.$transaction(async (tx) => {
+          for (let i = 0; i < n; i++) {
+            await tx.qrCode.create({ data: { code: `MPK-${startNum + i}`, batch, status: "ACTIVE" } });
+          }
+        });
+        return done(`${n} QR codes created in batch ${batch}.`, ["/admin/inventory", "/admin/qr-codes", "/admin"]);
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && attempt === 0) continue;
+        throw e;
+      }
+    }
+    return fail("Could not generate a batch. Another batch was created at the same time. Try again.");
   } catch (e) { return fail(prismaError(e)); }
 }
 

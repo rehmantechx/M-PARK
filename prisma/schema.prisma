@@ -82,6 +82,10 @@ model StickerOrder {
   qrCode          QrCode?       @relation(fields: [qrCodeId], references: [id])
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([paymentStatus])
+  @@index([buyerPhone])
 }
 
 model User {
@@ -116,6 +120,8 @@ model Vehicle {
   requests    ContactRequest[]
   scans       ScanLog[]
   stickerOrders StickerOrder[]
+
+  @@index([ownerId])
 }
 
 model QrCode {
@@ -130,6 +136,10 @@ model QrCode {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   stickerOrder StickerOrder?
+
+  @@index([vehicleId])
+  @@index([batch])
+  @@index([status])
 }
 
 model SubscriptionPlan {
@@ -155,6 +165,9 @@ model Subscription {
   status    SubscriptionStatus @default(ACTIVE)
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
+
+  @@index([userId])
+  @@index([status, endDate])
 }
 
 model OtpCode {
@@ -166,6 +179,8 @@ model OtpCode {
   attempts  Int      @default(0)
   verified  Boolean  @default(false)
   createdAt DateTime @default(now())
+
+  @@index([phone, purpose, verified])
 }
 
 model ContactRequest {
@@ -178,6 +193,9 @@ model ContactRequest {
   status      RequestStatus @default(PENDING)
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+
+  @@index([vehicleId])
+  @@index([status])
 }
 
 model Notification {
@@ -188,6 +206,8 @@ model Notification {
   body      String
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
 }
 
 model ScanLog {
@@ -198,6 +218,8 @@ model ScanLog {
   scannerPhone String?
   verified     Boolean  @default(false)
   createdAt    DateTime @default(now())
+
+  @@index([vehicleId])
 }
 
 model EmergencyContact {

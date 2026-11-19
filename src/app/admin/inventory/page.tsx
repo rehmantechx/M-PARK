@@ -3,22 +3,34 @@ import { ActionForm, SubmitButton } from "@/components/ActionForm";
 import { adminGenerateBatch } from "@/lib/actions";
 
 export default async function AdminInventory() {
-  const all = await db.qrCode.findMany({ select: { batch: true, code: true, vehicleId: true, status: true } });
-  const total = all.length;
-  const assigned = all.filter((c) => c.vehicleId).length;
-  const usable = all.filter((c) => !c.vehicleId && c.status === "ACTIVE").length;
-  const byBatch = new Map<string, { total: number; assigned: number; codes: string[] }>();
-  for (const c of all) {
-    const r = byBatch.get(c.batch) || { total: 0, assigned: 0, codes: [] };
-    r.total += 1;
-    if (c.vehicleId) r.assigned += 1;
-    r.codes.push(c.code);
-    byBatch.set(c.batch, r);
-  }
-  const rows = [...byBatch.entries()].map(([batch, r]) => {
-    const nums = r.codes.map((code) => Number(code.replace("MPK-", ""))).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
-    return { batch, total: r.total, assigned: r.assigned, unassigned: r.total - r.assigned, from: nums.length ? `MPK-${nums[0]}` : "-", to: nums.length ? `MPK-${nums[nums.length - 1]}` : "-" };
-  }).sort((a, b) => a.batch.localeCompare(b.batch));
+  // Counts and batch ranges come from database aggregates, not from
+  // loading every QR code into memory. This stays fast as stock grows.
+  const [total, assigned, usable, batches] = await Promise.all([
+    db.qrCode.count(),
+    db.qrCode.count({ where: { vehicleId: { not: null } } }),
+    db.qrCode.count({ where: { vehicleId: null, status: "ACTIVE" } }),
+    db.qrCode.groupBy({
+      by: ["batch"],
+      _count: { _all: true },
+      _min: { code: true },
+      _max: { code: true },
+      orderBy: { batch: "asc" },
+    }),
+  ]);
+  const assignedByBatch = await db.qrCode.groupBy({
+    by: ["batch"],
+    _count: { _all: true },
+    where: { vehicleId: { not: null } },
+  });
+  const assignedMap = new Map(assignedByBatch.map((b) => [b.batch, b._count._all]));
+  const rows = batches.map((b) => ({
+    batch: b.batch,
+    total: b._count._all,
+    assigned: assignedMap.get(b.batch) || 0,
+    unassigned: b._count._all - (assignedMap.get(b.batch) || 0),
+    from: b._min.code || "-",
+    to: b._max.code || "-",
+  }));
   return (
     <div className="card">
       <div className="flex justify-between items-center flex-wrap gap-3">

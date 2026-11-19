@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { formatPkr, isActiveSubscription } from "@/lib/validate";
+import { formatPkr } from "@/lib/validate";
 
 export default async function AdminOverview() {
   const now = new Date();
-  const [totalCustomers, totalVehicles, activeQr, inactiveQr, pendingRequests, recentUsers, recentScans, subs, paidAgg] = await Promise.all([
+  const [totalCustomers, totalVehicles, activeQr, inactiveQr, pendingRequests, recentUsers, recentScans, activeSubs, paidAgg] = await Promise.all([
     db.user.count({ where: { role: "CUSTOMER" } }),
     db.vehicle.count(),
     db.qrCode.count({ where: { status: "ACTIVE" } }),
@@ -12,10 +12,9 @@ export default async function AdminOverview() {
     db.contactRequest.count({ where: { status: "PENDING" } }),
     db.user.findMany({ where: { role: "CUSTOMER" }, include: { vehicles: { orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 5 }),
     db.scanLog.findMany({ include: { vehicle: true }, orderBy: { createdAt: "desc" }, take: 5 }),
-    db.subscription.findMany({ where: { status: "ACTIVE" } }),
+    db.subscription.count({ where: { status: "ACTIVE", endDate: { gt: now } } }),
     db.stickerOrder.aggregate({ _count: { _all: true }, _sum: { pricePkr: true }, where: { paymentStatus: "PAID" } }),
   ]);
-  const activeSubs = subs.filter((s) => isActiveSubscription(s)).length;
   const stickersSold = paidAgg._count._all;
   const stickerRevenue = paidAgg._sum.pricePkr || 0;
   return (
