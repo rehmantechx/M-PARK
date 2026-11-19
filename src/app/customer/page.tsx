@@ -2,14 +2,9 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { formatPkr, isActiveSubscription, normalizePhone } from "@/lib/validate";
+import { requestBadgeClass, requestLabel } from "@/lib/format";
 import { redirect } from "next/navigation";
 
-function statusBadge(status: string) {
-  return status === "PENDING" ? "badge-amber" : status === "APPROVED" ? "badge-green" : "badge-grey";
-}
-function statusLabel(status: string) {
-  return status === "PENDING" ? "Pending" : status === "APPROVED" ? "Approved" : "Ignored";
-}
 
 export default async function CustomerOverview() {
   const s = await getSession();
@@ -47,7 +42,7 @@ export default async function CustomerOverview() {
         </div>
         <div className="card">
           <h3 className="font-bold">Latest contact request</h3>
-          {latest ? <div className="mt-2 text-sm"><p><strong>{latest.scannerName}</strong> <span className={statusBadge(latest.status)}>{statusLabel(latest.status)}</span></p><p className="mt-1">{latest.message}</p><p className="text-slate-500 mt-1">{latest.createdAt.toISOString().slice(0, 16).replace("T", " ")} - {latest.scannerPhone}</p></div> : <p className="text-slate-600 text-sm mt-2">No contact requests yet.</p>}
+          {latest ? <div className="mt-2 text-sm"><p><strong>{latest.scannerName}</strong> <span className={requestBadgeClass(latest.status)}>{requestLabel(latest.status)}</span></p><p className="mt-1">{latest.message}</p><p className="text-slate-500 mt-1">{latest.createdAt.toISOString().slice(0, 16).replace("T", " ")} - {latest.scannerPhone}</p></div> : <p className="text-slate-600 text-sm mt-2">No contact requests yet.</p>}
           <Link href="/customer/requests" className="btn-secondary mt-4 inline-block">View all requests</Link>
         </div>
       </div>

@@ -3,9 +3,10 @@ import { ActionForm, SubmitButton } from "@/components/ActionForm";
 import { adminAddCustomer, adminCustomerUpdate, adminToggleBlock } from "@/lib/actions";
 import { formatPkr } from "@/lib/validate";
 
-export default async function AdminCustomers({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+export default async function AdminCustomers({ searchParams }: { searchParams: Promise<{ q?: string; edit?: string }> }) {
   const params = await searchParams;
   const q = (params.q || "").trim();
+  const editId = (params.edit || "").trim();
   const qUpper = q.toUpperCase();
   const customers = await db.user.findMany({
     where: { role: "CUSTOMER", ...(q ? { OR: [{ name: { contains: q } }, { phone: { contains: q } }, { vehicles: { some: { plate: { contains: qUpper } } } }, { vehicles: { some: { qrCodes: { some: { code: { contains: qUpper } } } } } }] } : {}) },
@@ -40,6 +41,7 @@ export default async function AdminCustomers({ searchParams }: { searchParams: P
                     <td>{sub ? <span>{sub.plan.name}<br /><span className="text-slate-500">{formatPkr(sub.plan.pricePkr)} - {sub.status}</span></span> : "No plan"}</td>
                     <td>{c.isBlocked ? <span className="badge-red">Blocked</span> : <span className="badge-green">Active</span>}</td>
                     <td>
+                      <a className="btn-secondary mr-2 inline-block" href={`/admin/customers${q ? `?q=${encodeURIComponent(q)}&` : "?"}edit=${c.id}`}>Edit</a>
                       <ActionForm action={adminToggleBlock.bind(null, c.id, !c.isBlocked)}>
                         <SubmitButton className={c.isBlocked ? "btn-primary" : "btn-danger"} confirm={c.isBlocked ? "Unblock this customer?" : "Block this customer? They will not be able to log in."}>{c.isBlocked ? "Unblock" : "Block"}</SubmitButton>
                       </ActionForm>
@@ -71,21 +73,24 @@ export default async function AdminCustomers({ searchParams }: { searchParams: P
       </div>
       <div className="card mt-5 max-w-2xl">
         <h3 className="font-bold">Edit a customer</h3>
-        <p className="text-slate-600 text-sm">Fix a mistyped name, phone, plate, or vehicle. Use the first customer in the list as an example, change the values, and save.</p>
-        {customers[0] ? (
+        <p className="text-slate-600 text-sm">Fix a mistyped name, phone, plate, or vehicle. Choose Edit next to a customer in the list above, change the values, and save.</p>
+        {(() => {
+          const selected = customers.find((c) => c.id === editId) || customers[0];
+          return selected ? (
           <ActionForm action={adminCustomerUpdate} className="grid md:grid-cols-2 gap-3 mt-4">
-            <input type="hidden" name="userId" value={customers[0].id} />
-            <input type="hidden" name="vehicleId" value={customers[0].vehicles[0]?.id || ""} />
-            <div><label className="label">Name</label><input className="input" name="name" defaultValue={customers[0].name} maxLength={100} required /></div>
-            <div><label className="label">Phone</label><input className="input" name="phone" type="tel" defaultValue={customers[0].phone} maxLength={15} required /></div>
-            <div><label className="label">Plate</label><input className="input" name="plate" defaultValue={customers[0].vehicles[0]?.plate || ""} maxLength={15} required /></div>
-            <div><label className="label">Year</label><input className="input" name="year" type="number" min={1900} max={2027} step={1} defaultValue={customers[0].vehicles[0]?.year || 2022} required /></div>
-            <div><label className="label">Make</label><input className="input" name="make" defaultValue={customers[0].vehicles[0]?.make || ""} maxLength={50} required /></div>
-            <div><label className="label">Model</label><input className="input" name="model" defaultValue={customers[0].vehicles[0]?.model || ""} maxLength={50} required /></div>
-            <div><label className="label">Color</label><input className="input" name="color" defaultValue={customers[0].vehicles[0]?.color || ""} maxLength={30} required /></div>
+            <input type="hidden" name="userId" value={selected.id} />
+            <input type="hidden" name="vehicleId" value={selected.vehicles[0]?.id || ""} />
+            <div><label className="label">Name</label><input className="input" name="name" defaultValue={selected.name} maxLength={100} required /></div>
+            <div><label className="label">Phone</label><input className="input" name="phone" type="tel" defaultValue={selected.phone} maxLength={15} required /></div>
+            <div><label className="label">Plate</label><input className="input" name="plate" defaultValue={selected.vehicles[0]?.plate || ""} maxLength={15} required /></div>
+            <div><label className="label">Year</label><input className="input" name="year" type="number" min={1900} max={2027} step={1} defaultValue={selected.vehicles[0]?.year || 2022} required /></div>
+            <div><label className="label">Make</label><input className="input" name="make" defaultValue={selected.vehicles[0]?.make || ""} maxLength={50} required /></div>
+            <div><label className="label">Model</label><input className="input" name="model" defaultValue={selected.vehicles[0]?.model || ""} maxLength={50} required /></div>
+            <div><label className="label">Color</label><input className="input" name="color" defaultValue={selected.vehicles[0]?.color || ""} maxLength={30} required /></div>
             <div className="md:col-span-2"><SubmitButton>Save customer</SubmitButton></div>
           </ActionForm>
-        ) : <p className="text-slate-600 text-sm mt-2">No customers yet.</p>}
+        ) : <p className="text-slate-600 text-sm mt-2">No customers yet.</p>;
+        })()}
       </div>
     </div>
   );

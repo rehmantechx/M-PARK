@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { qrDataUrl, scanUrlFor } from "@/lib/qr";
+import { qrBadgeClass } from "@/lib/format";
 import CopyButton from "@/components/CopyButton";
 
 export default async function CustomerQr() {
@@ -13,7 +14,7 @@ export default async function CustomerQr() {
   let dataUrl = "";
   try { dataUrl = await qrDataUrl(qr.code); } catch { return <div className="card max-w-lg"><h2 className="font-bold text-lg">My QR sticker</h2><p className="text-red-700 text-sm mt-2">QR image could not be generated. Please try again later.</p></div>; }
   const scanUrl = scanUrlFor(qr.code);
-  const badge = qr.status === "ACTIVE" ? "badge-green" : qr.status === "LOST" ? "badge-red" : "badge-grey";
+  const badge = qrBadgeClass(qr.status);
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <div className="card text-center">

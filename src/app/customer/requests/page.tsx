@@ -3,9 +3,8 @@ import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { ActionForm, SubmitButton } from "@/components/ActionForm";
 import { customerRequestAction } from "@/lib/actions";
+import { requestBadgeClass, requestLabel } from "@/lib/format";
 
-function label(status: string) { return status === "PENDING" ? "Pending" : status === "APPROVED" ? "Approved" : "Ignored"; }
-function badge(status: string) { return status === "PENDING" ? "badge-amber" : status === "APPROVED" ? "badge-green" : "badge-grey"; }
 
 export default async function CustomerRequests() {
   const s = await getSession();
@@ -19,7 +18,7 @@ export default async function CustomerRequests() {
         {list.length === 0 ? <p className="text-slate-600 text-sm">No contact requests yet.</p> : null}
         {list.map((r) => (
           <div key={r.id} className="border rounded-lg p-4">
-            <p><strong>{r.scannerName}</strong> - {r.scannerPhone} <span className={badge(r.status)}>{label(r.status)}</span></p>
+            <p><strong>{r.scannerName}</strong> - {r.scannerPhone} <span className={requestBadgeClass(r.status)}>{requestLabel(r.status)}</span></p>
             <p className="text-slate-600 text-sm mt-1">{r.message}</p>
             <p className="text-slate-400 text-xs mt-1">{r.vehicle.plate} - {r.createdAt.toISOString().slice(0, 16).replace("T", " ")}</p>
             {r.status === "PENDING" ? (

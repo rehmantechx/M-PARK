@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, type ReactNode } from "react";
+import { useActionState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 import type { ActionResult } from "@/lib/actions";
 
@@ -31,13 +31,3 @@ export function ActionForm({ action, children, className }: { action: (form: For
   );
 }
 
-// For actions bound with .bind(null, id, value): wrap them so useActionState
-// gets a stable function. Usage: <BoundActionForm action={fn.bind(null, id, v)}><SubmitButton/></BoundActionForm>
-export function BoundActionForm({ action, children, className }: { action: (form: FormData) => Promise<ActionResult>; children: ReactNode; className?: string }) {
-  return <ActionForm action={action} className={className}>{children}</ActionForm>;
-}
-
-export function useConfirm() {
-  const [open, setOpen] = useState(false);
-  return { open, setOpen };
-}

@@ -1,14 +1,7 @@
 "use client";
 
 import { useState } from "react";
-
-function normalizePhone(raw: string): string {
-  const p = String(raw || "").trim().replace(/[\s()-]/g, "");
-  if (p.startsWith("+92")) return p;
-  if (p.startsWith("92") && p.length === 12) return `+${p}`;
-  if (p.startsWith("0") && p.length === 11) return `+92${p.slice(1)}`;
-  return p;
-}
+import { normalizePhone } from "@/lib/phone";
 
 async function postJson(url: string, body: unknown) {
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

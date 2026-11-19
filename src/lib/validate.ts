@@ -1,20 +1,10 @@
 import { timingSafeEqual } from "crypto";
+import { isValidPhone, normalizePhone, phoneVariants } from "@/lib/phone";
+
+export { isValidPhone, normalizePhone, phoneVariants };
 
 // Shared validation for every dashboard form and API route.
 // All helpers return null when the value is valid, or a clear message.
-
-export function normalizePhone(raw: string): string {
-  const p = String(raw || "").trim().replace(/[\s()-]/g, "");
-  if (p.startsWith("+92")) return p;
-  if (p.startsWith("92") && p.length === 12) return `+${p}`;
-  if (p.startsWith("0") && p.length === 11) return `+92${p.slice(1)}`;
-  return p;
-}
-
-export function isValidPhone(raw: string): boolean {
-  const p = normalizePhone(raw);
-  return /^\+92\d{10}$/.test(p);
-}
 
 export function phoneError(raw: string): string | null {
   if (!raw || !String(raw).trim()) return "Phone number is required.";
@@ -71,16 +61,4 @@ export function formatPkr(n: number): string {
 export function isActiveSubscription(sub: { status: string; endDate: Date } | null | undefined): boolean {
   if (!sub) return false;
   return sub.status === "ACTIVE" && new Date(sub.endDate) > new Date();
-}
-
-export function phoneVariants(raw: string): string[] {
-  const n = normalizePhone(raw);
-  const out = [n];
-  // Seed data stores phones spaced like "+92 300 1234567".
-  if (/^\+92\d{10}$/.test(n)) {
-    out.push(`+92 ${n.slice(3, 6)} ${n.slice(6)}`);
-    out.push(`0${n.slice(3)}`);
-    out.push(n.slice(3));
-  }
-  return [...new Set(out)];
 }

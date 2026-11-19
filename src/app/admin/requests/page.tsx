@@ -1,10 +1,8 @@
 import { db } from "@/lib/db";
 import { ActionForm, SubmitButton } from "@/components/ActionForm";
 import { adminRequestAction } from "@/lib/actions";
+import { requestBadgeClass, requestLabel } from "@/lib/format";
 
-function badge(status: string) {
-  return status === "PENDING" ? "badge-amber" : status === "APPROVED" ? "badge-green" : "badge-grey";
-}
 
 export default async function AdminRequests({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const params = await searchParams;
@@ -24,7 +22,7 @@ export default async function AdminRequests({ searchParams }: { searchParams: Pr
         <div className="mt-4 space-y-3">
           {requests.map((r) => (
             <div key={r.id} className="border rounded-lg p-4">
-              <p className="font-semibold">{r.scannerName} - {r.scannerPhone} <span className={badge(r.status)}>{r.status === "PENDING" ? "Pending" : r.status === "APPROVED" ? "Approved" : "Ignored"}</span></p>
+              <p className="font-semibold">{r.scannerName} - {r.scannerPhone} <span className={requestBadgeClass(r.status)}>{requestLabel(r.status)}</span></p>
               <p className="text-sm mt-1">{r.message}</p>
               <p className="text-slate-500 text-sm mt-1">Plate {r.vehicle.plate} - Owner {r.vehicle.owner.name} - {r.createdAt.toISOString().slice(0, 16).replace("T", " ")}</p>
               {r.status === "PENDING" ? (

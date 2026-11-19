@@ -1,8 +1,5 @@
 import { db } from "@/lib/db";
-
-function qrBadge(status: string) {
-  return status === "ACTIVE" ? "badge-green" : status === "LOST" ? "badge-red" : "badge-grey";
-}
+import { qrBadgeClass } from "@/lib/format";
 
 export default async function AdminVehicles() {
   const vehicles = await db.vehicle.findMany({ include: { owner: true, qrCodes: { orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 100 });
@@ -20,7 +17,7 @@ export default async function AdminVehicles() {
                   <td className="py-3 font-semibold">{v.plate}</td>
                   <td>{v.make} {v.model} {v.year}, {v.color}</td>
                   <td>{v.owner.name}<br /><span className="text-slate-500">{v.owner.phone}</span></td>
-                  <td>{v.qrCodes.length === 0 ? "-" : v.qrCodes.map((q) => <span key={q.id} className="block">{q.code} <span className={qrBadge(q.status)}>{q.status}</span></span>)}</td>
+                  <td>{v.qrCodes.length === 0 ? "-" : v.qrCodes.map((q) => <span key={q.id} className="block">{q.code} <span className={qrBadgeClass(q.status)}>{q.status}</span></span>)}</td>
                 </tr>
               ))}
             </tbody>
