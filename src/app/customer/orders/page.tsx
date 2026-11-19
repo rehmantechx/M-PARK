@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 
@@ -22,7 +21,6 @@ export default async function CustomerOrders() {
           </div>
         ))}
       </div>
-      <Link href="/order" className="btn-primary mt-5 inline-block">Order another sticker</Link>
     </div>
   );
 }

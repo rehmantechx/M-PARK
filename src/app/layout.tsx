@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "M-Park - Smart Vehicle Communication System",
-  description: "M-Park: Scan, Connect, Move. Scan a car QR sticker, call the owner through M-Park Secure Relay, or send an anonymous M-Park Alert. Your number is never shared.",
+  title: "M-Park Dashboard",
+  description: "M-Park backend dashboard: Customer Dashboard and Admin Dashboard, login, and backend APIs for QR sticker orders, scans, calls, and alerts.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

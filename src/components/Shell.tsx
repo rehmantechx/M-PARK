@@ -10,8 +10,8 @@ export default function Shell({ title, subtitle, name, detail, links, children }
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen flex">
-      <aside className="w-60 bg-green-950 text-white flex flex-col shrink-0">
+    <div className="min-h-screen flex flex-col md:flex-row">
+      <aside className="w-full md:w-60 bg-green-950 text-white flex flex-col shrink-0">
         <div className="p-5 border-b border-green-900">
           <div className="flex items-center gap-2">
             <span className="bg-green-600 font-bold px-2 py-1 rounded">MP</span>
@@ -21,13 +21,13 @@ export default function Shell({ title, subtitle, name, detail, links, children }
             </div>
           </div>
         </div>
-        <nav className="p-3 flex-1 space-y-1">
+        <nav className="p-3 flex-1 flex flex-row flex-wrap gap-1 md:block md:space-y-1">
           {links.map((l) => (
             <Link key={l.href} href={l.href} className="block px-3 py-2 rounded-lg text-slate-200 hover:bg-green-900">
               {l.label}
             </Link>
           ))}
-          <Link href="/" className="block px-3 py-2 rounded-lg text-slate-400 hover:bg-green-900">Home</Link>
+          <Link href="/login" className="block px-3 py-2 rounded-lg text-slate-400 hover:bg-green-900">Login</Link>
           <LogoutButton />
         </nav>
         <div className="p-4 border-t border-green-900 text-sm">
@@ -36,8 +36,8 @@ export default function Shell({ title, subtitle, name, detail, links, children }
           <p className="text-slate-400 text-xs">{detail}</p>
         </div>
       </aside>
-      <main className="flex-1 p-6 md:p-8 max-w-6xl w-full">
-        <h1 className="text-3xl font-bold">{title}</h1>
+      <main className="flex-1 min-w-0 p-4 md:p-8 max-w-6xl w-full">
+        <h1 className="text-2xl md:text-3xl font-bold break-words">{title}</h1>
         <div className="mt-5">{children}</div>
       </main>
     </div>

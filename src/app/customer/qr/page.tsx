@@ -31,8 +31,8 @@ export default async function CustomerQr() {
         <ol className="list-decimal ml-5 text-sm text-slate-600 space-y-1 mt-2">
           <li>Print the QR and stick it on the inside of your windscreen.</li>
           <li>Anyone who needs your car to move can scan it.</li>
-          <li>They verify with OTP, then they can call or text you.</li>
-          <li>Your number is not shown openly before OTP verification.</li>
+          <li>They tap Call Owner or Send M-Park Alert. No OTP and no sign up are needed from the scanner.</li>
+          <li>Your number is never shown. Calls go through M-Park Secure Relay.</li>
         </ol>
       </div>
     </div>

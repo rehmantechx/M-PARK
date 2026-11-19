@@ -1,53 +1,32 @@
-# M-Park
+# M-Park Dashboard
 
-## Smart Vehicle Communication System
+## Backend Dashboard Only
 
-**Scan | Connect | Move**
+This repository is the M-Park backend dashboard only. It contains the Customer Dashboard (C) and the Admin Dashboard (D), the login, and the backend APIs and database that the dashboards need.
 
-M-Park connects car owners and the public through a QR sticker on the car windscreen. Anyone who needs the owner scans the sticker, and M-Park identifies the vehicle and offers two options: Call Owner and Send M-Park Alert. The owner receives an instant notification and can act on the situation.
+The public frontend is not in this branch. The landing page, the public scan page, the public order page, and the public registration page are built by the frontend team. This branch has no public marketing UI. The root URL `/` redirects to `/login`.
 
-The vehicle owner personal mobile number is never shown publicly. Communication happens only through the M-Park secure system. Messages are delivered instantly and anonymously. Your identity is protected. M-Park never shares your number or personal data with the vehicle owner.
+## What this dashboard does
 
-## How it works
+M-Park connects car owners and the public through a QR sticker on the car windscreen. A scanner uses the sticker to reach the owner. The owner number is never shown publicly. Communication happens only through the M-Park secure system. Messages are delivered instantly and anonymously.
 
-1. **Buy the sticker.** A customer purchases an M-Park QR sticker and registers the vehicle. The sticker is permanently linked to that vehicle until ownership or registration changes.
-2. **Stick it on.** The round blue QR sticker goes on the car windscreen. Every sticker has a unique QR code.
-3. **Scan it.** Anyone scans the sticker. M-Park identifies the vehicle and loads the options. No OTP, no sign up, and no phone number is needed from the scanner.
-4. **Connect.** Tap Call Owner through M-Park Secure Relay, or tap Send M-Park Alert. The owner gets an instant notification and comes to move the car.
+The core business is selling QR stickers. A customer orders a sticker, registers the vehicle, and the sticker is permanently linked to that vehicle until ownership or registration changes.
 
-### When to scan a car
+## Customer Dashboard (C)
 
-- A car is blocked behind another parked car.
-- A car has its lights left on.
-- A vehicle is blocking traffic.
-- Someone needs to give the vehicle owner an important message.
-
-## Features
-
-### Scan page
-
-- Mobile first, green M-Park design.
-- Shows M-PARK VEHICLE IDENTIFIED, the plate in large text, and the make, model, and colour.
-- Call Owner through M-Park Secure Relay. The owner number is never shown, and the scanner number is never shared with the owner.
-- Send M-Park Alert anonymously, with preset reasons: Car is blocked, Lights are on, Traffic blocked, Important message, plus a free text box.
-- Every call and alert creates a scan log, a contact request, and a notification in the database, so the owner and the admin can see it.
-- Example: LEK 7982, Grey Suzuki Cultus, QR code MPK-1009, at `/scan/MPK-1009`.
-
-### Customer Dashboard
-
-For a car owner:
+For a car owner, at `/customer`:
 
 - Overview of vehicle, QR sticker, pending requests, and notifications.
 - My Vehicle: registered vehicle details, editable.
 - My QR Sticker: the QR image for the vehicle, with download and print.
+- My Sticker Order: sticker price paid, payment status, order status, and delivery status.
 - Notifications: contact requests and system messages.
 - Contact Requests: approve or ignore requests from scanners.
 - Emergency Contact: add, edit, and remove an emergency contact.
-- My Sticker Order: sticker price paid, payment status, order status, and delivery status.
 
-### Admin Dashboard
+## Admin Dashboard (D)
 
-For the owner of M-Park:
+For the owner of M-Park, at `/admin`:
 
 - Overview: total registered users, total registered vehicles, active and inactive QR codes, pending contact requests, active subscriptions, QR stickers sold, and revenue from sticker sales.
 - Orders: QR sticker sales, buyer, plate, sticker code, price, payment status, and order status from Ordered to Activated. Mark orders paid or unpaid, change order status, and set the sticker price.
@@ -58,24 +37,40 @@ For the owner of M-Park:
 - Contact Requests and Notifications: monitoring of all scans, calls, alerts, and notifications.
 - Subscriptions and Plans: create and edit subscription plans and prices.
 
-### QR sticker selling
+## QR sticker selling
 
 Selling QR stickers is the core M-Park business:
 
-- The M-Park QR sticker costs PKR 999.
-- A customer orders the sticker on the Order Now page, pays, and then registers the vehicle.
-- The order reserves the next unassigned QR code and creates a sticker order in the database.
+- The M-Park QR sticker costs PKR 999, stored in the database and managed in the Admin Dashboard.
+- An order reserves the next unassigned QR code and creates a sticker order in the database.
 - The admin confirms payment, ships the sticker, and the sticker is permanently linked to the vehicle after registration.
 - The admin can see total QR stickers sold and total revenue from sticker sales.
 
-### Privacy and security
+## Backend APIs
 
-- The owner phone number is never rendered on the scan page, and the call route never returns it.
-- The scanner phone number is never shared with the owner.
+These APIs serve the dashboards and the frontend team. The frontend team builds the public pages on top of them. There is no public page UI for these APIs in this branch.
+
+| Route | Purpose |
+| --- | --- |
+| `POST /api/auth/admin-login` | Admin login with email and password |
+| `POST /api/auth/logout` | Logout, clears the session cookie |
+| `POST /api/otp/request` | Request a 6 digit OTP for a phone number |
+| `POST /api/otp/verify-customer` | Verify a customer OTP and log the customer in |
+| `POST /api/register` | Register a vehicle with QR verification and OTP |
+| `POST /api/order` | Create a sticker order and reserve a QR code |
+| `GET /api/qr/[code]` | Look up a QR code and its vehicle |
+| `POST /api/scan/[code]/call` | Log a Call Owner request through M-Park Secure Relay, owner number never returned |
+| `POST /api/scan/[code]/alert` | Log an anonymous M-Park Alert, with preset reasons and free text |
+
+Every call and alert creates a scan log, a contact request, and a notification in the database, so the owner and the admin can see it in their dashboards. Example vehicle: LEK 7982, Grey Suzuki Cultus, QR code MPK-1009.
+
+## Privacy and security
+
+- The owner phone number is never returned by the call route, and the scanner number is never shared with the owner.
 - Alerts are anonymous by design.
 - Admin login uses email and password with bcrypt password hashing and a JWT session cookie.
 - Customer login uses phone number and a 6 digit OTP. OTP codes expire in 10 minutes, allow a maximum of 5 attempts, and are stored as a SHA-256 hash in the database.
-- OTP is used only for customer registration and login. The scanner never needs OTP.
+- OTP is used only for customer registration and login. A scanner never needs OTP.
 
 ## Tech stack
 
@@ -97,8 +92,9 @@ Selling QR stickers is the core M-Park business:
 ### Run locally
 
 ```bash
-git clone https://github.com/rehmantechx/M-PARK.git
-cd M-PARK
+git clone https://github.com/pakmultilinks-dot/m-park.git
+cd m-park
+git checkout dashboard-only
 cp .env.example .env
 npm install
 npx prisma migrate dev --name init
@@ -106,7 +102,7 @@ npm run seed
 npm run dev
 ```
 
-Open http://localhost:3000 in the browser.
+Open http://localhost:3000 in the browser. The root URL redirects to `/login`.
 
 ### Build for production
 
@@ -144,7 +140,7 @@ The seed script in `prisma/seed.ts` creates test data only, for local developmen
 | --- | --- |
 | Admin | `admin@m-park.example` / `Admin1234!` - change this password before launch |
 | Customer | `+92 300 1234567`, login with phone and OTP |
-| Video vehicle | LEK 7982, Grey Suzuki Cultus, QR code MPK-1009, at `/scan/MPK-1009` |
+| Video vehicle | LEK 7982, Grey Suzuki Cultus, QR code MPK-1009 |
 | Unassigned QR codes | MPK-1010 to MPK-1050, MPK-1051 to MPK-1100 |
 
 Subscription plans in the seed data:
@@ -164,15 +160,12 @@ prisma/
   migrations/          Database migrations
 src/
   app/
-    page.tsx           Landing page
-    order/             Order a QR sticker
-    register/          Vehicle registration with QR and OTP verification
-    scan/[code]/       Scan page, Call Owner, Send M-Park Alert
+    page.tsx           Redirects to /login, no public page
     login/             Admin login and customer OTP login
     customer/          Customer Dashboard
     admin/             Admin Dashboard
     api/               Authentication, OTP, order, register, scan, and QR routes
-  components/          Shared layout and logout components
+  components/          Shared dashboard layout and logout components
   lib/                 Database, authentication, OTP, SMS, QR, and admin actions
   middleware.ts        Route protection for admin and customer areas
 ```
@@ -183,14 +176,14 @@ Before launch, complete these steps:
 
 - Set a production `SESSION_SECRET`, a production `DATABASE_URL`, and `NEXT_PUBLIC_BASE_URL` to the live domain, so QR scan links point to the live site.
 - Configure an SMS provider and keys for registration and login OTP.
-- Configure a telephony provider and keys for live Secure Relay voice calls. Until it is connected, the call screen shows the relay route and logs the call for the owner and the admin.
+- Configure a telephony provider and keys for live Secure Relay voice calls. Until it is connected, the call route logs the call for the owner and the admin.
 - Configure a payment provider and merchant keys for online sticker payment. Until it is connected, orders are created as unpaid and the admin confirms payment after the customer pays.
 - Change the seeded admin password.
 - Confirm the sticker price and the subscription plan prices.
 
 ## Roadmap
 
-Future vision for M-Park:
+Future vision for M-Park, not built in this branch:
 
 - AI based parking detection
 - Smart parking

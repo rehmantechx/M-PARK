@@ -33,7 +33,7 @@ export default async function CustomerOverview() {
         <div className="card">
           <h3 className="font-bold">My Sticker Order</h3>
           {myOrder ? <div className="mt-2 text-sm space-y-1"><p>Sticker: <strong>{myOrder.stickerCode}</strong></p><p>Price paid: <strong>PKR {myOrder.pricePkr}</strong> - {myOrder.paymentStatus === "PAID" ? "Paid" : "Unpaid"}</p><p>Order status: <strong>{myOrder.orderStatus}</strong></p><p className="text-slate-500">Delivery: {myOrder.deliveryAddress}</p></div> : <p className="text-slate-600 text-sm mt-2">No sticker order found for your phone yet.</p>}
-          <a href="/order" className="btn-secondary mt-4 inline-block">Order another sticker</a>
+          <Link href="/customer/orders" className="btn-secondary mt-4 inline-block">View my sticker orders</Link>
         </div>
         <div className="card">
           <h3 className="font-bold">Latest contact request</h3>
