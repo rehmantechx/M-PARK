@@ -1,15 +1,16 @@
 import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
 import { cookies } from "next/headers";
-import { db } from "./db";
+import { db } from "@/lib/db";
 
 export type SessionUser = { id: string; role: "ADMIN" | "CUSTOMER"; name: string; phone: string };
 
 const COOKIE = "mpark_session";
 
 function secretKey() {
-  const s = process.env.SESSION_SECRET || "dev-only-change-me";
-  return new TextEncoder().encode(s);
+  const s = process.env.SESSION_SECRET;
+  if (!s && process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET is not set. Set a long random value in .env.");
+  return new TextEncoder().encode(s || "dev-only-change-me");
 }
 
 export async function hashPassword(password: string) {
@@ -21,13 +22,13 @@ export async function checkPassword(password: string, hash: string) {
 }
 
 export async function createSession(user: SessionUser) {
-  const token = await new SignJWT({ sub: user.id, role: user.role, name: user.name, phone: user.phone })
+  const token = await new SignJWT({ sub: user.id, role: user.role })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
     .sign(secretKey());
   const store = await cookies();
-  store.set(COOKIE, token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7 });
+  store.set(COOKIE, token, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7 });
 }
 
 export async function clearSession() {
@@ -45,6 +46,7 @@ export async function getSession(): Promise<SessionUser | null> {
     if (!id) return null;
     const user = await db.user.findUnique({ where: { id } });
     if (!user || user.isBlocked) return null;
+    if (payload.role !== user.role) return null;
     return { id: user.id, role: user.role, name: user.name, phone: user.phone };
   } catch {
     return null;

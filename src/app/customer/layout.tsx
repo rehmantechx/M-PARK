@@ -15,5 +15,5 @@ const LINKS = [
 export default async function CustomerLayout({ children }: { children: React.ReactNode }) {
   const s = await getSession();
   if (!s || s.role !== "CUSTOMER") redirect("/login?role=customer");
-  return <Shell title="Customer Dashboard" subtitle="Customer Dashboard" name={s.name} detail={s.phone} links={LINKS}>{children}</Shell>;
+  return <Shell title="Customer Dashboard" subtitle="My vehicle and QR sticker" name={s.name} detail={s.phone} links={LINKS}>{children}</Shell>;
 }

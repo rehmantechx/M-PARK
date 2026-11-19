@@ -17,5 +17,5 @@ const LINKS = [
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const s = await getSession();
   if (!s || s.role !== "ADMIN") redirect("/login?role=admin");
-  return <Shell title="Admin Dashboard" subtitle="Admin Dashboard" name={s.name} detail="Single owner account" links={LINKS}>{children}</Shell>;
+  return <Shell title="Admin Dashboard" subtitle="All customers and sticker sales" name={s.name} detail={s.phone} links={LINKS}>{children}</Shell>;
 }

@@ -7,7 +7,8 @@
 export async function sendSms(phone: string, message: string): Promise<{ sent: boolean; provider: string; note: string }> {
   const provider = process.env.SMS_PROVIDER || "";
   if (!provider) {
-    console.log(`[SMS DEV] To ${phone}: ${message}`);
+    // Never log the OTP code. Only record that a dev code was generated.
+    console.log(`[SMS DEV] OTP generated for ${phone}. No SMS provider configured.`);
     return { sent: false, provider: "none", note: "No SMS provider configured. OTP is shown on screen in dev mode only." };
   }
   if (provider === "twilio") {

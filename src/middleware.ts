@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// Light guard only. Real session checks run in each layout with getSession().
+// Light guard only: redirects without a cookie. Real session verification
+// (JWT, expiry, role, blocked) runs in each layout with getSession().
 export function middleware(req: NextRequest) {
   const token = req.cookies.get("mpark_session")?.value;
   if (!token) {

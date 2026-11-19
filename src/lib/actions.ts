@@ -1,188 +1,343 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getSession, requireAdmin, requireCustomer } from "@/lib/auth";
+import { isValidPhone, isValidPlate, normalizePhone, parseIntStrict, parseMoney, parseYear, requiredText } from "@/lib/validate";
 
-// Note: server actions used as <form action> must return void or
-// Promise<void> in Next.js 15 types, so validation failures throw an Error
-// instead of returning a result object.
+// Server actions return a result object instead of throwing, so forms can
+// show a clear inline message. A thrown error is only for auth failures.
 
-export async function logoutAction(): Promise<void> {
-  const { clearSession } = await import("@/lib/auth");
-  await clearSession();
+export type ActionResult = { ok: boolean; error?: string; message?: string };
+
+function fail(error: string): ActionResult { return { ok: false, error }; }
+function done(message: string, paths: string[]): ActionResult {
+  for (const p of paths) revalidatePath(p);
+  return { ok: true, message };
 }
-
-export async function adminAddCustomer(form: FormData): Promise<void> {
-  await requireAdmin();
-  const name = String(form.get("name") || "").trim();
-  const phone = String(form.get("phone") || "").trim();
-  const plate = String(form.get("plate") || "").trim().toUpperCase();
-  const make = String(form.get("make") || "").trim();
-  const model = String(form.get("model") || "").trim();
-  const year = Number(form.get("year") || 2022);
-  const color = String(form.get("color") || "").trim();
-  const planId = String(form.get("planId") || "");
-  const qrCode = String(form.get("qrCode") || "").trim().toUpperCase();
-  if (!name || !phone || !plate || !make || !model || !planId || !qrCode) throw new Error("Name, phone, plate, vehicle, plan and QR code are required.");
-  const existingPhone = await db.user.findUnique({ where: { phone } });
-  if (existingPhone) throw new Error("A customer with this phone already exists.");
-  const existingPlate = await db.vehicle.findUnique({ where: { plate } });
-  if (existingPlate) throw new Error("This plate is already registered.");
-  const qr = await db.qrCode.findUnique({ where: { code: qrCode } });
-  if (!qr) throw new Error("QR code not found in inventory.");
-  if (qr.vehicleId) throw new Error("QR code is already assigned.");
-  const plan = await db.subscriptionPlan.findUnique({ where: { id: planId } });
-  if (!plan) throw new Error("Plan not found.");
-  const user = await db.user.create({ data: { role: "CUSTOMER", name, phone } });
-  const vehicle = await db.vehicle.create({ data: { plate, make, model, year, color, ownerId: user.id } });
-  await db.qrCode.update({ where: { id: qr.id }, data: { vehicleId: vehicle.id, status: "ACTIVE", assignedAt: new Date() } });
-  const start = new Date();
-  const end = new Date(start);
-  end.setMonth(end.getMonth() + plan.durationMonths);
-  await db.subscription.create({ data: { userId: user.id, planId: plan.id, startDate: start, endDate: end, status: "ACTIVE" } });
-  await db.notification.create({ data: { userId: user.id, title: "Welcome to M-Park", body: `Your QR sticker ${qrCode} is active for ${plate}.` } });
-  revalidatePath("/admin/customers");
-  revalidatePath("/admin");
-}
-
-export async function adminToggleBlock(userId: string, blocked: boolean): Promise<void> {
-  await requireAdmin();
-  await db.user.update({ where: { id: userId }, data: { isBlocked: blocked } });
-  revalidatePath("/admin/customers");
-}
-
-export async function adminQrStatus(qrId: string, status: "ACTIVE" | "INACTIVE" | "LOST"): Promise<void> {
-  await requireAdmin();
-  await db.qrCode.update({ where: { id: qrId }, data: { status } });
-  revalidatePath("/admin/qr-codes");
-  revalidatePath("/admin");
-}
-
-export async function adminGenerateBatch(count: number): Promise<void> {
-  await requireAdmin();
-  const n = Math.min(Math.max(Number(count) || 50, 1), 200);
-  const last = await db.qrCode.findFirst({ orderBy: { code: "desc" } });
-  let startNum = 1001;
-  if (last) {
-    const m = last.code.match(/MPK-(\d+)/);
-    if (m) startNum = Number(m[1]) + 1;
+function prismaError(e: unknown): string {
+  if (e instanceof Prisma.PrismaClientKnownRequestError) {
+    if (e.code === "P2002") return "This record already exists. Check phone, plate, or QR code.";
+    if (e.code === "P2025") return "That record no longer exists. Refresh the page and try again.";
   }
-  const batches = await db.qrCode.groupBy({ by: ["batch"] });
-  const batchNo = batches.length + 1;
-  const batch = `B-${String(batchNo).padStart(3, "0")}`;
-  for (let i = 0; i < n; i++) {
-    await db.qrCode.create({ data: { code: `MPK-${startNum + i}`, batch, status: "ACTIVE" } });
+  return "Something went wrong. Please try again.";
+}
+
+const ORDER_FLOW = ["ORDERED", "PRINTED", "SHIPPED", "DELIVERED", "ACTIVATED"] as const;
+type OrderStatus = (typeof ORDER_FLOW)[number];
+
+export async function adminAddCustomer(form: FormData): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    const name = String(form.get("name") || "").trim();
+    const phoneRaw = String(form.get("phone") || "").trim();
+    const plateRaw = String(form.get("plate") || "").trim().toUpperCase();
+    const make = String(form.get("make") || "").trim();
+    const model = String(form.get("model") || "").trim();
+    const color = String(form.get("color") || "").trim();
+    const planId = String(form.get("planId") || "");
+    const qrCode = String(form.get("qrCode") || "").trim().toUpperCase();
+    for (const [v, f] of [[name, "Name"], [make, "Make"], [model, "Model"], [color, "Color"]] as const) {
+      const err = requiredText(v, f, 100);
+      if (err) return fail(err);
+    }
+    if (!isValidPhone(phoneRaw)) return fail("Enter a valid Pakistani mobile number, for example +92 300 1234567.");
+    if (!isValidPlate(plateRaw)) return fail("Enter a valid plate, for example LEK 7982.");
+    if (!planId) return fail("Choose a plan.");
+    if (!qrCode) return fail("Choose a QR code.");
+    const year = parseYear(form.get("year"));
+    if (year.error || year.value === null) return fail(year.error || "Year is required.");
+    const phone = normalizePhone(phoneRaw);
+    const plate = plateRaw;
+    const plan = await db.subscriptionPlan.findUnique({ where: { id: planId } });
+    if (!plan || !plan.isActive) return fail("Plan not found or inactive. Choose an active plan.");
+    if (await db.user.findUnique({ where: { phone } })) return fail("A customer with this phone already exists.");
+    if (await db.vehicle.findUnique({ where: { plate } })) return fail("This plate is already registered.");
+    const qr = await db.qrCode.findUnique({ where: { code: qrCode } });
+    if (!qr) return fail("QR code not found in inventory.");
+    if (qr.vehicleId) return fail("QR code is already assigned.");
+    if (qr.status !== "ACTIVE") return fail("That QR code is not active. Choose an active code.");
+    await db.$transaction(async (tx) => {
+      const user = await tx.user.create({ data: { role: "CUSTOMER", name, phone } });
+      const vehicle = await tx.vehicle.create({ data: { plate, make, model, year: year.value as number, color, ownerId: user.id } });
+      await tx.qrCode.update({ where: { id: qr.id }, data: { vehicleId: vehicle.id, status: "ACTIVE", assignedAt: new Date() } });
+      const start = new Date();
+      const end = new Date(start);
+      end.setMonth(end.getMonth() + plan.durationMonths);
+      await tx.subscription.create({ data: { userId: user.id, planId: plan.id, startDate: start, endDate: end, status: "ACTIVE" } });
+      await tx.notification.create({ data: { userId: user.id, title: "Welcome to M-Park", body: `Your QR sticker ${qrCode} is active for ${plate}.` } });
+    });
+    return done("Customer added.", ["/admin/customers", "/admin", "/admin/vehicles", "/admin/qr-codes", "/admin/inventory", "/admin/subscriptions"]);
+  } catch (e) { return fail(prismaError(e)); }
+}
+
+export async function adminToggleBlock(userId: string, blocked: boolean): Promise<ActionResult> {
+  try {
+    const s = await requireAdmin();
+    if (!userId) return fail("Customer is required.");
+    if (userId === s.id) return fail("You cannot block your own account.");
+    const target = await db.user.findUnique({ where: { id: userId } });
+    if (!target) return fail("That customer no longer exists.");
+    if (target.role === "ADMIN") return fail("Admin accounts cannot be blocked here.");
+    await db.user.update({ where: { id: userId }, data: { isBlocked: blocked } });
+    return done(blocked ? "Customer blocked." : "Customer unblocked.", ["/admin/customers", "/admin"]);
+  } catch (e) { return fail(prismaError(e)); }
+}
+
+export async function adminQrStatus(qrId: string, status: "ACTIVE" | "INACTIVE" | "LOST"): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    if (!["ACTIVE", "INACTIVE", "LOST"].includes(status)) return fail("Invalid QR status.");
+    const qr = await db.qrCode.findUnique({ where: { id: qrId }, include: { vehicle: true } });
+    if (!qr) return fail("That QR code no longer exists.");
+    if (qr.status === status) return fail(`QR code is already ${status}.`);
+    if (qr.vehicleId && status !== "ACTIVE") {
+      const activeSub = await db.subscription.findFirst({ where: { userId: qr.vehicle!.ownerId, status: "ACTIVE", endDate: { gt: new Date() } } });
+      if (activeSub) return fail("That sticker is linked to a vehicle with an active subscription. Remove the subscription first.");
+    }
+    await db.qrCode.update({ where: { id: qrId }, data: { status } });
+    return done(`QR code marked ${status}.`, ["/admin/qr-codes", "/admin", "/admin/customers", "/admin/vehicles", "/admin/inventory"]);
+  } catch (e) { return fail(prismaError(e)); }
+}
+
+export async function adminGenerateBatch(form: FormData): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    const countRaw = parseIntStrict(form.get("count"), "Batch size");
+    if (countRaw.error || countRaw.value === null) return fail(countRaw.error || "Batch size is required.");
+    const n = Math.min(Math.max(countRaw.value, 1), 200);
+    const codes = await db.qrCode.findMany({ select: { code: true } });
+    let maxNum = 1000;
+    for (const c of codes) {
+      const m = c.code.match(/^MPK-(\d+)$/);
+      if (m) maxNum = Math.max(maxNum, Number(m[1]));
+    }
+    const batchNums = await db.qrCode.findMany({ select: { batch: true }, distinct: ["batch"] });
+    let maxBatch = 0;
+    for (const b of batchNums) { const m = b.batch.match(/^B-(\d+)$/); if (m) maxBatch = Math.max(maxBatch, Number(m[1])); }
+    const batch = `B-${String(maxBatch + 1).padStart(3, "0")}`;
+    const startNum = maxNum + 1;
+    await db.$transaction(async (tx) => {
+      for (let i = 0; i < n; i++) {
+        await tx.qrCode.create({ data: { code: `MPK-${startNum + i}`, batch, status: "ACTIVE" } });
+      }
+    });
+    return done(`${n} QR codes created in batch ${batch}.`, ["/admin/inventory", "/admin/qr-codes", "/admin"]);
+  } catch (e) { return fail(prismaError(e)); }
+}
+
+export async function adminPlanCreate(form: FormData): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    const name = String(form.get("name") || "").trim();
+    const description = String(form.get("description") || "").trim();
+    const err = requiredText(name, "Plan name", 100);
+    if (err) return fail(err);
+    const price = parseMoney(form.get("pricePkr"), "Price");
+    if (price.error || price.value === null) return fail(price.error || "Price is required.");
+    const dur = parseIntStrict(form.get("durationMonths"), "Duration");
+    if (dur.error || dur.value === null) return fail(dur.error || "Duration is required.");
+    if (dur.value < 1 || dur.value > 120) return fail("Duration must be between 1 and 120 months.");
+    const existing = (await db.subscriptionPlan.findMany({ select: { name: true } })).find((x) => x.name.toLowerCase() === name.toLowerCase());
+    if (existing) return fail("A plan with this name already exists.");
+    await db.subscriptionPlan.create({ data: { name, pricePkr: price.value, durationMonths: dur.value, description: description || null } });
+    return done("Plan created.", ["/admin/subscriptions"]);
+  } catch (e) { return fail(prismaError(e)); }
+}
+
+export async function adminPlanUpdate(form: FormData): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    const id = String(form.get("id") || "");
+    const name = String(form.get("name") || "").trim();
+    const description = String(form.get("description") || "").trim();
+    const isActive = String(form.get("isActive") || "true") === "true";
+    if (!id) return fail("Plan is required.");
+    const price = parseMoney(form.get("pricePkr"), "Price");
+    if (price.error || price.value === null) return fail(price.error || "Price is required.");
+    const dur = parseIntStrict(form.get("durationMonths"), "Duration");
+    if (dur.error || dur.value === null) return fail(dur.error || "Duration is required.");
+    if (dur.value < 1 || dur.value > 120) return fail("Duration must be between 1 and 120 months.");
+    const err = requiredText(name, "Plan name", 100);
+    if (err) return fail(err);
+    const plan = await db.subscriptionPlan.findUnique({ where: { id } });
+    if (!plan) return fail("That plan no longer exists.");
+    const dup = (await db.subscriptionPlan.findMany({ select: { id: true, name: true } })).find((x) => x.id !== id && x.name.toLowerCase() === name.toLowerCase());
+    if (dup) return fail("A plan with this name already exists.");
+    await db.subscriptionPlan.update({ where: { id }, data: { pricePkr: price.value, isActive, name, durationMonths: dur.value, description: description || null } });
+    return done("Plan saved.", ["/admin/subscriptions", "/admin/customers"]);
+  } catch (e) { return fail(prismaError(e)); }
+}
+
+export async function adminCustomerUpdate(form: FormData): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    const userId = String(form.get("userId") || "");
+    const vehicleId = String(form.get("vehicleId") || "");
+    const name = String(form.get("name") || "").trim();
+    const phoneRaw = String(form.get("phone") || "").trim();
+    const plateRaw = String(form.get("plate") || "").trim().toUpperCase();
+    const make = String(form.get("make") || "").trim();
+    const model = String(form.get("model") || "").trim();
+    const color = String(form.get("color") || "").trim();
+    if (!userId) return fail("Customer is required.");
+    for (const [v, f] of [[name, "Name"], [make, "Make"], [model, "Model"], [color, "Color"]] as const) {
+      const err = requiredText(v, f, 100);
+      if (err) return fail(err);
+    }
+    if (!isValidPhone(phoneRaw)) return fail("Enter a valid Pakistani mobile number.");
+    if (!isValidPlate(plateRaw)) return fail("Enter a valid plate.");
+    const year = parseYear(form.get("year"));
+    if (year.error || year.value === null) return fail(year.error || "Year is required.");
+    const phone = normalizePhone(phoneRaw);
+    const user = await db.user.findUnique({ where: { id: userId } });
+    if (!user) return fail("That customer no longer exists.");
+    if (phone !== user.phone && (await db.user.findUnique({ where: { phone } }))) return fail("A customer with this phone already exists.");
+    await db.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { name, phone } });
+      if (vehicleId) {
+        const vehicle = await tx.vehicle.findUnique({ where: { id: vehicleId } });
+        if (!vehicle || vehicle.ownerId !== userId) throw new Error("Vehicle not found.");
+        if (plateRaw !== vehicle.plate && (await tx.vehicle.findUnique({ where: { plate: plateRaw } }))) throw new Error("This plate is already registered.");
+        await tx.vehicle.update({ where: { id: vehicleId }, data: { plate: plateRaw, make, model, year: year.value as number, color } });
+      }
+    });
+    return done("Customer saved.", ["/admin/customers", "/admin", "/admin/vehicles"]);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "Vehicle not found." || msg === "This plate is already registered.") return fail(msg);
+    return fail(prismaError(e));
   }
-  revalidatePath("/admin/inventory");
-  revalidatePath("/admin/qr-codes");
 }
 
-export async function adminPlanCreate(form: FormData): Promise<void> {
-  await requireAdmin();
-  const name = String(form.get("name") || "").trim();
-  const pricePkr = Number(form.get("pricePkr") || 0);
-  const durationMonths = Number(form.get("durationMonths") || 1);
-  const description = String(form.get("description") || "").trim();
-  if (!name || pricePkr <= 0 || durationMonths < 1) throw new Error("Plan name, a price above 0, and a duration of at least 1 month are required.");
-  const existing = await db.subscriptionPlan.findUnique({ where: { name } });
-  if (existing) throw new Error("A plan with this name already exists.");
-  await db.subscriptionPlan.create({ data: { name, pricePkr, durationMonths, description: description || null } });
-  revalidatePath("/admin/subscriptions");
+export async function customerUpdateVehicle(form: FormData): Promise<ActionResult> {
+  try {
+    const s = await requireCustomer();
+    const vehicleId = String(form.get("vehicleId") || "");
+    const plateRaw = String(form.get("plate") || "").trim().toUpperCase();
+    const make = String(form.get("make") || "").trim();
+    const model = String(form.get("model") || "").trim();
+    const color = String(form.get("color") || "").trim();
+    if (!vehicleId) return fail("Vehicle is required.");
+    for (const [v, f] of [[make, "Make"], [model, "Model"], [color, "Color"]] as const) {
+      const err = requiredText(v, f, 100);
+      if (err) return fail(err);
+    }
+    if (!isValidPlate(plateRaw)) return fail("Enter a valid plate, for example LEK 7982.");
+    const year = parseYear(form.get("year"));
+    if (year.error || year.value === null) return fail(year.error || "Year is required.");
+    const vehicle = await db.vehicle.findUnique({ where: { id: vehicleId } });
+    if (!vehicle || vehicle.ownerId !== s.id) return fail("Vehicle not found.");
+    if (plateRaw !== vehicle.plate && (await db.vehicle.findUnique({ where: { plate: plateRaw } }))) return fail("This plate is already registered.");
+    await db.vehicle.update({ where: { id: vehicleId }, data: { plate: plateRaw, make, model, year: year.value as number, color } });
+    return done("Vehicle saved.", ["/customer", "/customer/vehicle"]);
+  } catch (e) { return fail(prismaError(e)); }
 }
 
-export async function adminPlanUpdate(form: FormData): Promise<void> {
-  await requireAdmin();
-  const id = String(form.get("id") || "");
-  const pricePkr = Number(form.get("pricePkr") || 0);
-  const isActive = String(form.get("isActive") || "true") === "true";
-  if (!id || pricePkr <= 0) throw new Error("A price above 0 is required.");
-  await db.subscriptionPlan.update({ where: { id }, data: { pricePkr, isActive } });
-  revalidatePath("/admin/subscriptions");
+export async function customerEmergencyUpsert(form: FormData): Promise<ActionResult> {
+  try {
+    const s = await requireCustomer();
+    const name = String(form.get("name") || "").trim();
+    const phoneRaw = String(form.get("phone") || "").trim();
+    const relationship = String(form.get("relationship") || "").trim();
+    const err = requiredText(name, "Emergency contact name", 100);
+    if (err) return fail(err);
+    if (!isValidPhone(phoneRaw)) return fail("Enter a valid Pakistani mobile number for the emergency contact.");
+    if (relationship.length > 50) return fail("Relationship must be 50 characters or less.");
+    await db.emergencyContact.upsert({
+      where: { userId: s.id },
+      create: { userId: s.id, name, phone: normalizePhone(phoneRaw), relationship: relationship || null },
+      update: { name, phone: normalizePhone(phoneRaw), relationship: relationship || null },
+    });
+    return done("Emergency contact saved.", ["/customer/emergency"]);
+  } catch (e) { return fail(prismaError(e)); }
 }
 
-export async function customerUpdateVehicle(form: FormData): Promise<void> {
-  const s = await requireCustomer();
-  const vehicleId = String(form.get("vehicleId") || "");
-  const plate = String(form.get("plate") || "").trim().toUpperCase();
-  const make = String(form.get("make") || "").trim();
-  const model = String(form.get("model") || "").trim();
-  const year = Number(form.get("year") || 2022);
-  const color = String(form.get("color") || "").trim();
-  const vehicle = await db.vehicle.findUnique({ where: { id: vehicleId } });
-  if (!vehicle || vehicle.ownerId !== s.id) throw new Error("Vehicle not found.");
-  if (plate !== vehicle.plate) {
-    const other = await db.vehicle.findUnique({ where: { plate } });
-    if (other) throw new Error("This plate is already registered.");
-  }
-  await db.vehicle.update({ where: { id: vehicleId }, data: { plate, make, model, year, color } });
-  revalidatePath("/customer");
-  revalidatePath("/customer/vehicle");
+export async function customerEmergencyDelete(): Promise<ActionResult> {
+  try {
+    const s = await requireCustomer();
+    const existing = await db.emergencyContact.findUnique({ where: { userId: s.id } });
+    if (!existing) return fail("No emergency contact to remove.");
+    await db.emergencyContact.deleteMany({ where: { userId: s.id } });
+    return done("Emergency contact removed.", ["/customer/emergency"]);
+  } catch (e) { return fail(prismaError(e)); }
 }
 
-export async function customerEmergencyUpsert(form: FormData): Promise<void> {
-  const s = await requireCustomer();
-  const name = String(form.get("name") || "").trim();
-  const phone = String(form.get("phone") || "").trim();
-  const relationship = String(form.get("relationship") || "").trim();
-  if (!name || !phone) throw new Error("Emergency contact name and phone are required.");
-  await db.emergencyContact.upsert({
-    where: { userId: s.id },
-    create: { userId: s.id, name, phone, relationship: relationship || null },
-    update: { name, phone, relationship: relationship || null },
-  });
-  revalidatePath("/customer/emergency");
+export async function customerRequestAction(requestId: string, status: "APPROVED" | "IGNORED"): Promise<ActionResult> {
+  try {
+    const s = await requireCustomer();
+    if (!["APPROVED", "IGNORED"].includes(status)) return fail("Invalid request action.");
+    const req = await db.contactRequest.findUnique({ where: { id: requestId }, include: { vehicle: true } });
+    if (!req || req.vehicle.ownerId !== s.id) return fail("Request not found.");
+    if (req.status !== "PENDING") return fail(`This request is already ${req.status.toLowerCase()}.`);
+    await db.contactRequest.update({ where: { id: requestId }, data: { status } });
+    return done(status === "APPROVED" ? "Request approved." : "Request ignored.", ["/customer/requests", "/customer"]);
+  } catch (e) { return fail(prismaError(e)); }
 }
 
-export async function customerEmergencyDelete(): Promise<void> {
-  const s = await requireCustomer();
-  await db.emergencyContact.deleteMany({ where: { userId: s.id } });
-  revalidatePath("/customer/emergency");
+export async function adminRequestAction(requestId: string, status: "APPROVED" | "IGNORED"): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    if (!["APPROVED", "IGNORED"].includes(status)) return fail("Invalid request action.");
+    const req = await db.contactRequest.findUnique({ where: { id: requestId } });
+    if (!req) return fail("Request not found.");
+    if (req.status !== "PENDING") return fail(`This request is already ${req.status.toLowerCase()}.`);
+    await db.contactRequest.update({ where: { id: requestId }, data: { status } });
+    return done(status === "APPROVED" ? "Request approved." : "Request ignored.", ["/admin/requests", "/admin"]);
+  } catch (e) { return fail(prismaError(e)); }
 }
 
-export async function customerRequestAction(requestId: string, status: "APPROVED" | "IGNORED"): Promise<void> {
-  const s = await requireCustomer();
-  const req = await db.contactRequest.findUnique({ where: { id: requestId }, include: { vehicle: true } });
-  if (!req || req.vehicle.ownerId !== s.id) throw new Error("Request not found.");
-  await db.contactRequest.update({ where: { id: requestId }, data: { status } });
-  revalidatePath("/customer/requests");
-  revalidatePath("/customer");
+export async function adminOrderPayment(form: FormData): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    const id = String(form.get("id") || "");
+    const paymentStatus = String(form.get("paymentStatus") || "") as "PAID" | "UNPAID";
+    if (!id || (paymentStatus !== "PAID" && paymentStatus !== "UNPAID")) return fail("Order and payment status are required.");
+    const order = await db.stickerOrder.findUnique({ where: { id } });
+    if (!order) return fail("That order no longer exists.");
+    if (paymentStatus === "UNPAID" && order.orderStatus === "ACTIVATED") return fail("An activated order cannot be marked unpaid. Change the order status first.");
+    await db.stickerOrder.update({ where: { id }, data: { paymentStatus } });
+    return done(paymentStatus === "PAID" ? "Order marked paid." : "Order marked unpaid.", ["/admin/orders", "/admin"]);
+  } catch (e) { return fail(prismaError(e)); }
 }
 
-export async function adminOrderPayment(form: FormData): Promise<void> {
-  await requireAdmin();
-  const id = String(form.get("id") || "");
-  const paymentStatus = String(form.get("paymentStatus") || "") as "PAID" | "UNPAID";
-  if (!id || (paymentStatus !== "PAID" && paymentStatus !== "UNPAID")) throw new Error("Order and payment status are required.");
-  await db.stickerOrder.update({ where: { id }, data: { paymentStatus } });
-  revalidatePath("/admin/orders");
-  revalidatePath("/admin");
+export async function adminOrderStatus(form: FormData): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    const id = String(form.get("id") || "");
+    const orderStatus = String(form.get("orderStatus") || "") as OrderStatus;
+    if (!id || !ORDER_FLOW.includes(orderStatus)) return fail("Order and order status are required.");
+    const order = await db.stickerOrder.findUnique({ where: { id } });
+    if (!order) return fail("That order no longer exists.");
+    const current = ORDER_FLOW.indexOf(order.orderStatus as OrderStatus);
+    const next = ORDER_FLOW.indexOf(orderStatus);
+    if (next < current) return fail("Order status cannot move backwards. Use the current or next step.");
+    if (orderStatus === "ACTIVATED" && order.paymentStatus !== "PAID") return fail("An order can only be activated after payment is marked paid.");
+    await db.stickerOrder.update({ where: { id }, data: { orderStatus } });
+    return done("Order status saved.", ["/admin/orders", "/admin"]);
+  } catch (e) { return fail(prismaError(e)); }
 }
 
-export async function adminOrderStatus(form: FormData): Promise<void> {
-  await requireAdmin();
-  const id = String(form.get("id") || "");
-  const orderStatus = String(form.get("orderStatus") || "") as "ORDERED" | "PRINTED" | "SHIPPED" | "DELIVERED" | "ACTIVATED";
-  if (!id || !["ORDERED", "PRINTED", "SHIPPED", "DELIVERED", "ACTIVATED"].includes(orderStatus)) throw new Error("Order and order status are required.");
-  await db.stickerOrder.update({ where: { id }, data: { orderStatus } });
-  revalidatePath("/admin/orders");
-  revalidatePath("/admin");
+export async function adminProductPrice(form: FormData): Promise<ActionResult> {
+  try {
+    await requireAdmin();
+    const id = String(form.get("id") || "");
+    const price = parseMoney(form.get("pricePkr"), "Price");
+    if (!id) return fail("Product is required.");
+    if (price.error || price.value === null) return fail(price.error || "Price is required.");
+    const product = await db.product.findUnique({ where: { id } });
+    if (!product) return fail("That product no longer exists.");
+    await db.product.update({ where: { id }, data: { pricePkr: price.value } });
+    return done("Sticker price saved. It applies to new orders only.", ["/admin/orders", "/admin"]);
+  } catch (e) { return fail(prismaError(e)); }
 }
 
-export async function adminProductPrice(form: FormData): Promise<void> {
-  await requireAdmin();
-  const id = String(form.get("id") || "");
-  const pricePkr = Number(form.get("pricePkr") || 0);
-  if (!id || pricePkr <= 0) throw new Error("A price above 0 is required.");
-  await db.product.update({ where: { id }, data: { pricePkr } });
-  revalidatePath("/admin/orders");
-  revalidatePath("/admin");
-}
-
-export async function markNotificationsRead(): Promise<void> {
-  const s = await getSession();
-  if (!s) return;
-  await db.notification.updateMany({ where: { userId: s.id, isRead: false }, data: { isRead: true } });
-  revalidatePath("/customer/notifications");
-  revalidatePath("/admin/notifications");
+export async function markNotificationsRead(): Promise<ActionResult> {
+  try {
+    const s = await getSession();
+    if (!s) return fail("Login required.");
+    await db.notification.updateMany({ where: { userId: s.id, isRead: false }, data: { isRead: true } });
+    return done("All notifications marked read.", ["/customer/notifications", "/admin/notifications"]);
+  } catch (e) { return fail(prismaError(e)); }
 }
