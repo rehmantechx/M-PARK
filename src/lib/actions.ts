@@ -1,13 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getSession, requireAdmin, requireCustomer } from "@/lib/auth";
+import { AuthError, getSession, requireAdmin, requireCustomer } from "@/lib/auth";
+import { ORDER_FLOW, type OrderStatus } from "@/lib/orders";
+import { logError } from "@/lib/logger";
 import { isValidPhone, isValidPlate, normalizePhone, parseIntStrict, parseMoney, parseYear, requiredText } from "@/lib/validate";
 
 // Server actions return a result object instead of throwing, so forms can
-// show a clear inline message. A thrown error is only for auth failures.
+// show a clear inline message. AuthError and DomainError messages are shown
+// verbatim; NEXT_REDIRECT from redirect() must keep propagating.
 
 export type ActionResult = { ok: boolean; error?: string; message?: string };
 
@@ -16,6 +20,27 @@ function done(message: string, paths: string[]): ActionResult {
   for (const p of paths) revalidatePath(p);
   return { ok: true, message };
 }
+
+// Business-rule violation raised inside transactions for messages the
+// caller should surface as an inline error.
+class DomainError extends Error {}
+
+function isNextRedirect(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const digest = (e as Error & { digest?: unknown }).digest;
+  return typeof digest === "string" && digest.startsWith("NEXT_REDIRECT");
+}
+
+// Standard catch mapping: keep redirects, then auth and domain messages,
+// then known Prisma errors, and only then a generic message. Unexpected
+// errors are logged server side without their stack reaching the client.
+function caughtError(e: unknown): ActionResult {
+  if (isNextRedirect(e)) throw e;
+  if (e instanceof AuthError || e instanceof DomainError) return fail(e.message);
+  logError("action.failed", e);
+  return fail(prismaError(e));
+}
+
 function prismaError(e: unknown): string {
   if (e instanceof Prisma.PrismaClientKnownRequestError) {
     if (e.code === "P2002") return "This record already exists. Check phone, plate, or QR code.";
@@ -24,8 +49,18 @@ function prismaError(e: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-const ORDER_FLOW = ["ORDERED", "PRINTED", "SHIPPED", "DELIVERED", "ACTIVATED"] as const;
-type OrderStatus = (typeof ORDER_FLOW)[number];
+// Next QR code number and batch number, computed with SQL aggregates so
+// generating a batch never loads the whole QR table into memory.
+async function nextQrNumbers(): Promise<{ maxNum: number; maxBatch: number }> {
+  const [codeRow] = await db.$queryRaw<{ maxCode: bigint | null }[]>`
+    SELECT MAX(CAST(SUBSTR(code, 5) AS INTEGER)) AS maxCode FROM QrCode WHERE code LIKE 'MPK-%'`;
+  const [batchRow] = await db.$queryRaw<{ maxBatch: bigint | null }[]>`
+    SELECT MAX(CAST(SUBSTR(batch, 3) AS INTEGER)) AS maxBatch FROM QrCode WHERE batch LIKE 'B-%'`;
+  return {
+    maxNum: Math.max(1000, Number(codeRow?.maxCode ?? 0)),
+    maxBatch: Math.max(0, Number(batchRow?.maxBatch ?? 0)),
+  };
+}
 
 export async function adminAddCustomer(form: FormData): Promise<ActionResult> {
   try {
@@ -52,13 +87,13 @@ export async function adminAddCustomer(form: FormData): Promise<ActionResult> {
     const plate = plateRaw;
     await db.$transaction(async (tx) => {
       const plan = await tx.subscriptionPlan.findUnique({ where: { id: planId } });
-      if (!plan || !plan.isActive) throw new Error("Plan not found or inactive. Choose an active plan.");
-      if (await tx.user.findUnique({ where: { phone } })) throw new Error("A customer with this phone already exists.");
-      if (await tx.vehicle.findUnique({ where: { plate } })) throw new Error("This plate is already registered.");
+      if (!plan || !plan.isActive) throw new DomainError("Plan not found or inactive. Choose an active plan.");
+      if (await tx.user.findUnique({ where: { phone } })) throw new DomainError("A customer with this phone already exists.");
+      if (await tx.vehicle.findUnique({ where: { plate } })) throw new DomainError("This plate is already registered.");
       const qr = await tx.qrCode.findUnique({ where: { code: qrCode } });
-      if (!qr) throw new Error("QR code not found in inventory.");
-      if (qr.vehicleId) throw new Error("QR code is already assigned.");
-      if (qr.status !== "ACTIVE") throw new Error("That QR code is not active. Choose an active code.");
+      if (!qr) throw new DomainError("QR code not found in inventory.");
+      if (qr.vehicleId) throw new DomainError("QR code is already assigned.");
+      if (qr.status !== "ACTIVE") throw new DomainError("That QR code is not active. Choose an active code.");
       const user = await tx.user.create({ data: { role: "CUSTOMER", name, phone } });
       const vehicle = await tx.vehicle.create({ data: { plate, make, model, year: year.value as number, color, ownerId: user.id } });
       await tx.qrCode.update({ where: { id: qr.id }, data: { vehicleId: vehicle.id, status: "ACTIVE", assignedAt: new Date() } });
@@ -70,9 +105,7 @@ export async function adminAddCustomer(form: FormData): Promise<ActionResult> {
     });
     return done("Customer added.", ["/admin/customers", "/admin", "/admin/vehicles", "/admin/qr-codes", "/admin/inventory", "/admin/subscriptions"]);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    if (msg.startsWith("Plan not found") || msg.startsWith("A customer with") || msg.startsWith("This plate") || msg.startsWith("QR code")) return fail(msg);
-    return fail(prismaError(e));
+    return caughtError(e);
   }
 }
 
@@ -86,7 +119,7 @@ export async function adminToggleBlock(userId: string, blocked: boolean): Promis
     if (target.role === "ADMIN") return fail("Admin accounts cannot be blocked here.");
     await db.user.update({ where: { id: userId }, data: { isBlocked: blocked } });
     return done(blocked ? "Customer blocked." : "Customer unblocked.", ["/admin/customers", "/admin"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }
 
 export async function adminQrStatus(qrId: string, status: "ACTIVE" | "INACTIVE" | "LOST"): Promise<ActionResult> {
@@ -104,7 +137,7 @@ export async function adminQrStatus(qrId: string, status: "ACTIVE" | "INACTIVE" 
     }
     await db.qrCode.update({ where: { id: qrId }, data: { status } });
     return done(`QR code marked ${status}.`, ["/admin/qr-codes", "/admin", "/admin/customers", "/admin/vehicles", "/admin/inventory"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }
 
 export async function adminGenerateBatch(form: FormData): Promise<ActionResult> {
@@ -113,27 +146,15 @@ export async function adminGenerateBatch(form: FormData): Promise<ActionResult> 
     const countRaw = parseIntStrict(form.get("count"), "Batch size");
     if (countRaw.error || countRaw.value === null) return fail(countRaw.error || "Batch size is required.");
     const n = Math.min(Math.max(countRaw.value, 1), 200);
-    const codes = await db.qrCode.findMany({ select: { code: true } });
-    let maxNum = 1000;
-    for (const c of codes) {
-      const m = c.code.match(/^MPK-(\d+)$/);
-      if (m) maxNum = Math.max(maxNum, Number(m[1]));
-    }
-    const batchNums = await db.qrCode.findMany({ select: { batch: true }, distinct: ["batch"] });
-    let maxBatch = 0;
-    for (const b of batchNums) { const m = b.batch.match(/^B-(\d+)$/); if (m) maxBatch = Math.max(maxBatch, Number(m[1])); }
+    let { maxNum, maxBatch } = await nextQrNumbers();
     // Retry once if another admin generated a batch at the same moment
     // and took the same code numbers. The unique code constraint is the
     // final guard, and the retry recomputes the next numbers.
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt > 0) {
-        const fresh = await db.qrCode.findMany({ select: { code: true } });
-        for (const c of fresh) {
-          const m = c.code.match(/^MPK-(\d+)$/);
-          if (m) maxNum = Math.max(maxNum, Number(m[1]));
-        }
+        ({ maxNum, maxBatch } = await nextQrNumbers());
       }
-      const batch = `B-${String(maxBatch + 1 + attempt).padStart(3, "0")}`;
+      const batch = `B-${String(maxBatch + 1).padStart(3, "0")}`;
       const startNum = maxNum + 1;
       try {
         await db.$transaction(async (tx) => {
@@ -148,7 +169,7 @@ export async function adminGenerateBatch(form: FormData): Promise<ActionResult> 
       }
     }
     return fail("Could not generate a batch. Another batch was created at the same time. Try again.");
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }
 
 export async function adminPlanCreate(form: FormData): Promise<ActionResult> {
@@ -167,7 +188,7 @@ export async function adminPlanCreate(form: FormData): Promise<ActionResult> {
     if (existing) return fail("A plan with this name already exists.");
     await db.subscriptionPlan.create({ data: { name, pricePkr: price.value, durationMonths: dur.value, description: description || null } });
     return done("Plan created.", ["/admin/subscriptions"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }
 
 export async function adminPlanUpdate(form: FormData): Promise<ActionResult> {
@@ -191,7 +212,7 @@ export async function adminPlanUpdate(form: FormData): Promise<ActionResult> {
     if (dup) return fail("A plan with this name already exists.");
     await db.subscriptionPlan.update({ where: { id }, data: { pricePkr: price.value, isActive, name, durationMonths: dur.value, description: description || null } });
     return done("Plan saved.", ["/admin/subscriptions", "/admin/customers"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }
 
 export async function adminCustomerUpdate(form: FormData): Promise<ActionResult> {
@@ -214,24 +235,43 @@ export async function adminCustomerUpdate(form: FormData): Promise<ActionResult>
     if (!isValidPlate(plateRaw)) return fail("Enter a valid plate.");
     const year = parseYear(form.get("year"));
     if (year.error || year.value === null) return fail(year.error || "Year is required.");
+    // Optimistic lock: the form carries the updatedAt it rendered from, so
+    // a concurrent edit makes this save fail instead of silently winning.
+    const expectedRaw = String(form.get("updatedAt") || "");
+    const expectedUpdatedAt = new Date(expectedRaw);
+    if (!expectedRaw || Number.isNaN(expectedUpdatedAt.getTime())) {
+      return fail("This customer was changed by someone else. Refresh the page and try again.");
+    }
     const phone = normalizePhone(phoneRaw);
     const user = await db.user.findUnique({ where: { id: userId } });
     if (!user) return fail("That customer no longer exists.");
     if (phone !== user.phone && (await db.user.findUnique({ where: { phone } }))) return fail("A customer with this phone already exists.");
     await db.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: userId }, data: { name, phone } });
+      const userUpdate = await tx.user.updateMany({
+        where: { id: userId, updatedAt: expectedUpdatedAt },
+        data: { name, phone },
+      });
+      if (userUpdate.count === 0) {
+        throw new DomainError("This customer was changed by someone else. Refresh the page and try again.");
+      }
       if (vehicleId) {
         const vehicle = await tx.vehicle.findUnique({ where: { id: vehicleId } });
-        if (!vehicle || vehicle.ownerId !== userId) throw new Error("Vehicle not found.");
-        if (plateRaw !== vehicle.plate && (await tx.vehicle.findUnique({ where: { plate: plateRaw } }))) throw new Error("This plate is already registered.");
-        await tx.vehicle.update({ where: { id: vehicleId }, data: { plate: plateRaw, make, model, year: year.value as number, color } });
+        if (!vehicle || vehicle.ownerId !== userId) throw new DomainError("Vehicle not found.");
+        if (plateRaw !== vehicle.plate && (await tx.vehicle.findUnique({ where: { plate: plateRaw } }))) {
+          throw new DomainError("This plate is already registered.");
+        }
+        const vehicleUpdate = await tx.vehicle.updateMany({
+          where: { id: vehicleId, updatedAt: vehicle.updatedAt },
+          data: { plate: plateRaw, make, model, year: year.value as number, color },
+        });
+        if (vehicleUpdate.count === 0) {
+          throw new DomainError("This customer was changed by someone else. Refresh the page and try again.");
+        }
       }
     });
     return done("Customer saved.", ["/admin/customers", "/admin", "/admin/vehicles"]);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    if (msg === "Vehicle not found." || msg === "This plate is already registered.") return fail(msg);
-    return fail(prismaError(e));
+    return caughtError(e);
   }
 }
 
@@ -256,7 +296,7 @@ export async function customerUpdateVehicle(form: FormData): Promise<ActionResul
     if (plateRaw !== vehicle.plate && (await db.vehicle.findUnique({ where: { plate: plateRaw } }))) return fail("This plate is already registered.");
     await db.vehicle.update({ where: { id: vehicleId }, data: { plate: plateRaw, make, model, year: year.value as number, color } });
     return done("Vehicle saved.", ["/customer", "/customer/vehicle"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }
 
 export async function customerEmergencyUpsert(form: FormData): Promise<ActionResult> {
@@ -274,8 +314,13 @@ export async function customerEmergencyUpsert(form: FormData): Promise<ActionRes
       create: { userId: s.id, name, phone: normalizePhone(phoneRaw), relationship: relationship || null },
       update: { name, phone: normalizePhone(phoneRaw), relationship: relationship || null },
     });
-    return done("Emergency contact saved.", ["/customer/emergency"]);
-  } catch (e) { return fail(prismaError(e)); }
+    revalidatePath("/customer/emergency");
+  } catch (e) {
+    return caughtError(e);
+  }
+  // Post/Redirect/Get: the form unmounts once the contact is saved, so the
+  // success message travels in the URL instead of form state.
+  redirect("/customer/emergency?flash=saved");
 }
 
 export async function customerEmergencyDelete(): Promise<ActionResult> {
@@ -284,8 +329,11 @@ export async function customerEmergencyDelete(): Promise<ActionResult> {
     const existing = await db.emergencyContact.findUnique({ where: { userId: s.id } });
     if (!existing) return fail("No emergency contact to remove.");
     await db.emergencyContact.delete({ where: { userId: s.id } });
-    return done("Emergency contact removed.", ["/customer/emergency"]);
-  } catch (e) { return fail(prismaError(e)); }
+    revalidatePath("/customer/emergency");
+  } catch (e) {
+    return caughtError(e);
+  }
+  redirect("/customer/emergency?flash=removed");
 }
 
 export async function customerRequestAction(requestId: string, status: "APPROVED" | "IGNORED"): Promise<ActionResult> {
@@ -296,8 +344,14 @@ export async function customerRequestAction(requestId: string, status: "APPROVED
     if (!req || req.vehicle.ownerId !== s.id) return fail("Request not found.");
     if (req.status !== "PENDING") return fail(`This request is already ${req.status.toLowerCase()}.`);
     await db.contactRequest.update({ where: { id: requestId }, data: { status } });
-    return done(status === "APPROVED" ? "Request approved." : "Request ignored.", ["/customer/requests", "/customer"]);
-  } catch (e) { return fail(prismaError(e)); }
+    revalidatePath("/customer/requests");
+    revalidatePath("/customer");
+  } catch (e) {
+    return caughtError(e);
+  }
+  // Post/Redirect/Get: the approve form unmounts once the row leaves the
+  // pending state, so the success message travels in the URL.
+  redirect(`/customer/requests?flash=${status === "APPROVED" ? "approved" : "ignored"}`);
 }
 
 export async function adminRequestAction(requestId: string, status: "APPROVED" | "IGNORED"): Promise<ActionResult> {
@@ -308,8 +362,12 @@ export async function adminRequestAction(requestId: string, status: "APPROVED" |
     if (!req) return fail("Request not found.");
     if (req.status !== "PENDING") return fail(`This request is already ${req.status.toLowerCase()}.`);
     await db.contactRequest.update({ where: { id: requestId }, data: { status } });
-    return done(status === "APPROVED" ? "Request approved." : "Request ignored.", ["/admin/requests", "/admin"]);
-  } catch (e) { return fail(prismaError(e)); }
+    revalidatePath("/admin/requests");
+    revalidatePath("/admin");
+  } catch (e) {
+    return caughtError(e);
+  }
+  redirect(`/admin/requests?flash=${status === "APPROVED" ? "approved" : "ignored"}`);
 }
 
 export async function adminOrderPayment(form: FormData): Promise<ActionResult> {
@@ -323,7 +381,7 @@ export async function adminOrderPayment(form: FormData): Promise<ActionResult> {
     if (paymentStatus === "UNPAID" && order.orderStatus === "ACTIVATED") return fail("An activated order cannot be marked unpaid. Change the order status first.");
     await db.stickerOrder.update({ where: { id }, data: { paymentStatus } });
     return done(paymentStatus === "PAID" ? "Order marked paid." : "Order marked unpaid.", ["/admin/orders", "/admin"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }
 
 export async function adminOrderStatus(form: FormData): Promise<ActionResult> {
@@ -340,7 +398,7 @@ export async function adminOrderStatus(form: FormData): Promise<ActionResult> {
     if (orderStatus === "ACTIVATED" && order.paymentStatus !== "PAID") return fail("An order can only be activated after payment is marked paid.");
     await db.stickerOrder.update({ where: { id }, data: { orderStatus } });
     return done("Order status saved.", ["/admin/orders", "/admin"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }
 
 export async function adminProductPrice(form: FormData): Promise<ActionResult> {
@@ -354,14 +412,17 @@ export async function adminProductPrice(form: FormData): Promise<ActionResult> {
     if (!product) return fail("That product no longer exists.");
     await db.product.update({ where: { id }, data: { pricePkr: price.value } });
     return done("Sticker price saved. It applies to new orders only.", ["/admin/orders", "/admin"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }
 
 export async function markNotificationsRead(): Promise<ActionResult> {
   try {
     const s = await getSession();
-    if (!s) return fail("Login required.");
-    await db.notification.updateMany({ where: { userId: s.id, isRead: false }, data: { isRead: true } });
+    if (!s) throw new AuthError();
+    // Admins monitor the whole system, so mark every notification read;
+    // customers only clear their own.
+    const where = s.role === "ADMIN" ? { isRead: false } : { userId: s.id, isRead: false };
+    await db.notification.updateMany({ where, data: { isRead: true } });
     return done("All notifications marked read.", ["/customer/notifications", "/admin/notifications"]);
-  } catch (e) { return fail(prismaError(e)); }
+  } catch (e) { return caughtError(e); }
 }

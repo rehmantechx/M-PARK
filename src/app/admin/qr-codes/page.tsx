@@ -34,10 +34,14 @@ export default async function AdminQrCodes({ searchParams }: { searchParams: Pro
                   <td>{qr.vehicle ? `${qr.vehicle.plate} - ${qr.vehicle.owner.name}` : "Unassigned"}</td>
                   <td><span className={qr.status === "ACTIVE" ? "badge-green" : qr.status === "LOST" ? "badge-red" : "badge-grey"}>{qr.status}</span></td>
                   <td>
+                    {/* All three forms stay mounted so the action message
+                        survives revalidation; the current status's button is
+                        disabled because it would be a no-op (the server also
+                        guards it). */}
                     <div className="flex gap-1 flex-wrap">
-                      <ActionForm action={adminQrStatus.bind(null, qr.id, "ACTIVE")}><SubmitButton className="btn-secondary" >Activate</SubmitButton></ActionForm>
-                      <ActionForm action={adminQrStatus.bind(null, qr.id, "INACTIVE")}><SubmitButton className="btn-secondary">Deactivate</SubmitButton></ActionForm>
-                      <ActionForm action={adminQrStatus.bind(null, qr.id, "LOST")}><SubmitButton className="btn-danger" confirm="Mark this sticker lost?">Lost</SubmitButton></ActionForm>
+                      <ActionForm action={adminQrStatus.bind(null, qr.id, "ACTIVE")}><SubmitButton className="btn-secondary" disabled={qr.status === "ACTIVE"}>Activate</SubmitButton></ActionForm>
+                      <ActionForm action={adminQrStatus.bind(null, qr.id, "INACTIVE")}><SubmitButton className="btn-secondary" disabled={qr.status === "INACTIVE"}>Deactivate</SubmitButton></ActionForm>
+                      <ActionForm action={adminQrStatus.bind(null, qr.id, "LOST")}><SubmitButton className="btn-danger" confirm="Mark this sticker lost?" disabled={qr.status === "LOST"}>Lost</SubmitButton></ActionForm>
                       <Link className="btn-secondary" href={`/api/qr/${qr.code}`}>View API</Link>
                     </div>
                   </td>

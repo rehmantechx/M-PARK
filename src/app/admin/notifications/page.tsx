@@ -5,13 +5,19 @@ import { markNotificationsRead } from "@/lib/actions";
 export default async function AdminNotifications() {
   const list = await db.notification.findMany({ include: { user: true }, orderBy: { createdAt: "desc" }, take: 50 });
   const scans = await db.scanLog.findMany({ include: { vehicle: true }, orderBy: { createdAt: "desc" }, take: 20 });
-  const unread = list.filter((n) => !n.isRead).length;
+  // Aggregate instead of counting the loaded page, so the badge is correct
+  // even when more unread notifications exist beyond the first 50.
+  const unread = await db.notification.count({ where: { isRead: false } });
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <div className="card">
         <div className="flex justify-between items-center flex-wrap gap-2">
           <h2 className="font-bold text-lg">Notifications monitoring</h2>
-          {unread > 0 ? <ActionForm action={markNotificationsRead}><SubmitButton className="btn-secondary">Mark all read ({unread})</SubmitButton></ActionForm> : null}
+          {/* Always mounted: the form must outlive the button so its success
+              message stays visible after every notification is read. */}
+          <ActionForm action={markNotificationsRead}>
+            {unread > 0 ? <SubmitButton className="btn-secondary">Mark all read ({unread})</SubmitButton> : null}
+          </ActionForm>
         </div>
         <div className="mt-4 space-y-3">
           {list.length === 0 ? <p className="text-slate-600 text-sm">No notifications yet.</p> : null}

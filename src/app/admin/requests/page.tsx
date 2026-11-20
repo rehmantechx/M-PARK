@@ -4,14 +4,18 @@ import { adminRequestAction } from "@/lib/actions";
 import { requestBadgeClass, requestLabel } from "@/lib/format";
 
 
-export default async function AdminRequests({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
+export default async function AdminRequests({ searchParams }: { searchParams: Promise<{ status?: string; flash?: string }> }) {
   const params = await searchParams;
   const filter = params.status === "PENDING" || params.status === "APPROVED" || params.status === "IGNORED" ? params.status : "";
+  // Post/Redirect/Get: the approve form unmounts when its row changes, so
+  // the success message arrives as a query parameter instead.
+  const flash = params.flash === "approved" ? "Request approved." : params.flash === "ignored" ? "Request ignored." : "";
   const requests = await db.contactRequest.findMany({ where: filter ? { status: filter } : {}, include: { vehicle: { include: { owner: true } } }, orderBy: { createdAt: "desc" }, take: 100 });
   return (
     <div className="card">
       <h2 className="font-bold text-lg">Contact Requests</h2>
       <p className="text-slate-600 text-sm">Requests from people who scanned a sticker. Customers approve or ignore them in their own dashboard, and the admin can do the same here.</p>
+      {flash ? <p role="status" className="mt-2 text-sm font-medium text-green-700">{flash}</p> : null}
       <div className="flex gap-2 mt-4 flex-wrap">
         <a className={!filter ? "btn-primary" : "btn-secondary"} href="/admin/requests">All</a>
         <a className={filter === "PENDING" ? "btn-primary" : "btn-secondary"} href="/admin/requests?status=PENDING">Pending</a>

@@ -6,14 +6,19 @@ import { customerRequestAction } from "@/lib/actions";
 import { requestBadgeClass, requestLabel } from "@/lib/format";
 
 
-export default async function CustomerRequests() {
+export default async function CustomerRequests({ searchParams }: { searchParams: Promise<{ flash?: string }> }) {
   const s = await getSession();
   if (!s) redirect("/login?role=customer");
+  const params = await searchParams;
+  // Post/Redirect/Get: the approve form unmounts when its row changes, so
+  // the success message arrives as a query parameter instead.
+  const flash = params.flash === "approved" ? "Request approved." : params.flash === "ignored" ? "Request ignored." : "";
   const list = await db.contactRequest.findMany({ where: { vehicle: { ownerId: s.id } }, include: { vehicle: true }, orderBy: { createdAt: "desc" }, take: 100 });
   return (
     <div className="card">
       <h2 className="font-bold text-lg">Contact requests</h2>
       <p className="text-slate-600 text-sm">Requests from people who scanned your QR sticker.</p>
+      {flash ? <p role="status" className="mt-2 text-sm font-medium text-green-700">{flash}</p> : null}
       <div className="mt-4 space-y-4">
         {list.length === 0 ? <p className="text-slate-600 text-sm">No contact requests yet.</p> : null}
         {list.map((r) => (

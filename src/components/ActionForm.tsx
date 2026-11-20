@@ -6,13 +6,13 @@ import type { ActionResult } from "@/lib/actions";
 
 const initial: ActionResult = { ok: true };
 
-export function SubmitButton({ children, className, confirm }: { children: ReactNode; className?: string; confirm?: string }) {
+export function SubmitButton({ children, className, confirm, disabled }: { children: ReactNode; className?: string; confirm?: string; disabled?: boolean }) {
   const { pending } = useFormStatus();
   return (
     <button
       type="submit"
       className={className || "btn-primary"}
-      disabled={pending}
+      disabled={pending || disabled}
       onClick={confirm ? (e) => { if (!window.confirm(confirm)) e.preventDefault(); } : undefined}
     >
       {pending ? "Working..." : children}
