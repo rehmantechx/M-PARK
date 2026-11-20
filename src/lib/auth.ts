@@ -7,6 +7,15 @@ export type SessionUser = { id: string; role: "ADMIN" | "CUSTOMER"; name: string
 
 const COOKIE = "mpark_session";
 
+// Thrown when a request needs a valid session. Actions catch it and show
+// its message inline instead of leaking a generic "Something went wrong".
+export class AuthError extends Error {
+  constructor(message = "Your session has expired. Please log in again.") {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
 function secretKey() {
   const s = process.env.SESSION_SECRET;
   if (process.env.NODE_ENV === "production") {
@@ -58,12 +67,12 @@ export async function getSession(): Promise<SessionUser | null> {
 
 export async function requireAdmin(): Promise<SessionUser> {
   const s = await getSession();
-  if (!s || s.role !== "ADMIN") throw new Error("Admin login required");
+  if (!s || s.role !== "ADMIN") throw new AuthError();
   return s;
 }
 
 export async function requireCustomer(): Promise<SessionUser> {
   const s = await getSession();
-  if (!s || s.role !== "CUSTOMER") throw new Error("Customer login required");
+  if (!s || s.role !== "CUSTOMER") throw new AuthError();
   return s;
 }
