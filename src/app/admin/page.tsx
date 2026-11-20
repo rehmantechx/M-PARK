@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { formatPkr } from "@/lib/validate";
+import { formatPkr } from "@/lib/format";
 
 export default async function AdminOverview() {
   const now = new Date();

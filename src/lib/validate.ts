@@ -54,10 +54,6 @@ export function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ba, bb);
 }
 
-export function formatPkr(n: number): string {
-  return `PKR ${Number(n || 0).toLocaleString("en-PK")}`;
-}
-
 export function isActiveSubscription(sub: { status: string; endDate: Date } | null | undefined): boolean {
   if (!sub) return false;
   return sub.status === "ACTIVE" && new Date(sub.endDate) > new Date();

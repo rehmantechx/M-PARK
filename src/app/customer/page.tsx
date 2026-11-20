@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { formatPkr, isActiveSubscription, normalizePhone } from "@/lib/validate";
+import { formatPkr } from "@/lib/format";
+import { isActiveSubscription, normalizePhone } from "@/lib/validate";
 import { requestBadgeClass, requestLabel } from "@/lib/format";
 import { redirect } from "next/navigation";
 

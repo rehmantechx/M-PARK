@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { ActionForm, SubmitButton } from "@/components/ActionForm";
 import { adminPlanCreate, adminPlanUpdate } from "@/lib/actions";
-import { formatPkr } from "@/lib/validate";
+import { formatPkr } from "@/lib/format";
 
 export default async function AdminSubscriptions() {
   const plans = await db.subscriptionPlan.findMany({ orderBy: { pricePkr: "asc" } });
@@ -22,8 +22,8 @@ export default async function AdminSubscriptions() {
                 <input type="hidden" name="id" value={p.id} />
                 <div><label className="label">Name</label><input className="input" name="name" defaultValue={p.name} maxLength={100} required /></div>
                 <div className="flex gap-2 flex-wrap">
-                  <input className="input flex-1 min-w-24" name="pricePkr" type="number" min={1} step={1} defaultValue={p.pricePkr} required />
-                  <input className="input flex-1 min-w-24" name="durationMonths" type="number" min={1} max={120} step={1} defaultValue={p.durationMonths} required />
+                  <div className="flex-1 min-w-24"><label className="label">Price PKR</label><input className="input" name="pricePkr" type="number" min={1} step={1} defaultValue={p.pricePkr} required /></div>
+                  <div className="flex-1 min-w-24"><label className="label">Duration months</label><input className="input" name="durationMonths" type="number" min={1} max={120} step={1} defaultValue={p.durationMonths} required /></div>
                 </div>
                 <div><label className="label">Description</label><input className="input" name="description" defaultValue={p.description || ""} maxLength={200} /></div>
                 <div className="flex gap-2 flex-wrap">

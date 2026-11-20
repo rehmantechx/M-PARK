@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { formatPkr, normalizePhone } from "@/lib/validate";
+import { formatPkr } from "@/lib/format";
+import { normalizePhone } from "@/lib/validate";
 
 export default async function CustomerOrders() {
   const s = await getSession();

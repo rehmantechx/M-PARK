@@ -1,6 +1,10 @@
 // Shared display helpers. Badge colours and date formats live here once,
 // instead of being copied into every dashboard page with small differences.
 
+export function formatPkr(n: number): string {
+  return `PKR ${Number(n || 0).toLocaleString("en-PK")}`;
+}
+
 export function formatDate(d: Date | string): string {
   return new Date(d).toISOString().slice(0, 10);
 }

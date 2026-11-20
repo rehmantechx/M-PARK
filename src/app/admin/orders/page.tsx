@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { ActionForm, SubmitButton } from "@/components/ActionForm";
 import { adminOrderPayment, adminOrderStatus, adminProductPrice } from "@/lib/actions";
-import { formatPkr } from "@/lib/validate";
+import { formatPkr } from "@/lib/format";
 
 const STATUSES = ["ORDERED", "PRINTED", "SHIPPED", "DELIVERED", "ACTIVATED"] as const;
 
