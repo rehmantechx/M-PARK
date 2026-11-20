@@ -111,6 +111,18 @@ npm run build
 npm run start
 ```
 
+### Checks and tests
+
+```bash
+npm run typecheck   # tsc --noEmit, must be clean
+npm test            # Full Playwright suite against a running dev server
+```
+
+`npm test` expects the dev server on
+http://localhost:3000. Playwright writes its HTML report to
+`playwright-report/` and saved artifacts to `test-results/`, both git
+ignored.
+
 ## Environment variables
 
 Copy `.env.example` to `.env` and fill in the values. Never commit `.env`.
@@ -128,7 +140,7 @@ Copy `.env.example` to `.env` and fill in the values. Never commit `.env`.
 | `PAYMENT_MERCHANT_ID` | Merchant ID for the payment provider. |
 | `PAYMENT_SECRET` | Secret key for the payment provider. |
 
-With no SMS provider configured, OTP codes are logged to the server console and, in development mode only, shown on screen labelled as a development code. In production, configure an SMS provider so OTP codes are delivered by SMS.
+With no SMS provider configured, OTP codes are never written to the server log. In development mode only, the code is shown on screen labelled as a development code. In production, configure an SMS provider so OTP codes are delivered by SMS.
 
 ## Database and test accounts
 
@@ -166,8 +178,13 @@ src/
     admin/             Admin Dashboard
     api/               Authentication, OTP, order, register, scan, and QR routes
   components/          Shared dashboard layout and logout components
-  lib/                 Database, authentication, OTP, SMS, QR, and admin actions
+  lib/                 Database, authentication, OTP, SMS, QR, validation, formatting,
+                       logging, rate limiting, orders, and admin actions
   middleware.ts        Route protection for admin and customer areas
+tests/
+  global-setup.ts      Creates unique QA accounts so reruns never collide
+  *.spec.ts            Public API, admin, customer, and concurrency suites
+playwright.config.ts   Playwright configuration
 ```
 
 ## Security and production checklist
@@ -190,10 +207,22 @@ This dashboard was hardened for production. The main guarantees are:
 - All forms and APIs validate input on the server: phone and plate
   formats, year, whole number money, and field lengths. Errors are
   friendly messages, never stack traces or database details.
-- Rate limits: admin login 10 per 5 minutes, OTP 5 per hour per phone,
-  scan alert and call 10 per minute per QR code. All return 429.
-- Security headers are set in next.config.mjs: nosniff, frame deny,
-  referrer, and permissions policy.
+- Rate limits, all returning 429: admin login 10 per 5 minutes per email
+  plus 30 per 5 minutes per IP, OTP request 5 per hour per phone checked
+  before the account lookup, OTP verify 30 per minute per IP, sticker
+  order 60 per 10 minutes per IP, registration 50 per 10 minutes per IP,
+  QR lookup 60 per minute per IP, scan alert and call 10 per minute per
+  QR code. Rate limit keys are derived values, never identity.
+- Security headers in next.config.mjs: nosniff, frame deny, referrer
+  policy, permissions policy, a content security policy, cross origin
+  opener and resource policy, and, in production only, HSTS.
+- Edit conflicts: the customer edit form sends the record it loaded and
+  the server rejects the write if the record changed since, so two admins
+  editing at the same time cannot silently overwrite each other.
+- Lists are capped at 100 rows per page and totals are computed with
+  database aggregates, never by loading whole tables into memory.
+- Server logs are one line of JSON and never contain passwords, OTP
+  codes, session cookies, full phone numbers, or stack traces.
 - Concurrent orders are queued in one process for SQLite, so two
   orders can never share a QR code. On Postgres with several servers
   this must become a database lock instead of the in-process mutex.
@@ -214,7 +243,10 @@ Before launch, complete these steps:
 - Configure a telephony provider and keys for live Secure Relay voice calls. Until it is connected, the call route logs the call for the owner and the admin.
 - Configure a payment provider and merchant keys for online sticker payment. Until it is connected, orders are created as unpaid and the admin confirms payment after the customer pays.
 - Change the seeded admin password.
-- Confirm the sticker price and the subscription plan prices.
+- Confirm the real sticker price is PKR 999, currently seeded in the
+  product table and editable in the Admin Dashboard.
+- Confirm the real owner for the seeded video vehicle, LEK 7982, Grey
+  Suzuki Cultus, QR code MPK-1009, currently seeded as Mudassir.
 
 ## Roadmap
 
