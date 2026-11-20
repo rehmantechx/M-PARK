@@ -1,14 +1,15 @@
 // SMS sender. Supported when configured: Twilio via env keys. Add a Pakistan
 // SMS gateway by adding a branch here and its keys to .env.example.
-// In development, with no provider configured, the OTP is logged to the
-// server console and, only in dev mode, returned to the screen labelled
-// as a development code. That is not a production flow.
+// In development, with no provider configured, the OTP is shown on the
+// screen labelled as a development code. That is not a production flow.
+
+import { logInfo } from "@/lib/logger";
 
 export async function sendSms(phone: string, message: string): Promise<{ sent: boolean; provider: string; note: string }> {
   const provider = process.env.SMS_PROVIDER || "";
   if (!provider) {
-    // Never log the OTP code. Only record that a dev code was generated.
-    console.log(`[SMS DEV] OTP generated for ${phone}. No SMS provider configured.`);
+    // Never log the phone number or the OTP code, only the event itself.
+    logInfo("sms.no_provider_configured", { provider: "none" });
     return { sent: false, provider: "none", note: "No SMS provider configured. OTP is shown on screen in dev mode only." };
   }
   if (provider === "twilio") {
