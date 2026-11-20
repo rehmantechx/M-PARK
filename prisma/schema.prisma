@@ -83,9 +83,11 @@ model StickerOrder {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  @@index([userId])
+  @@index([userId, createdAt])
   @@index([paymentStatus])
-  @@index([buyerPhone])
+  @@index([buyerPhone, createdAt])
+  @@index([orderStatus])
+  @@index([createdAt])
 }
 
 model User {
@@ -103,6 +105,8 @@ model User {
   notifications Notification[]
   emergency     EmergencyContact?
   stickerOrders StickerOrder[]
+
+  @@index([role, createdAt])
 }
 
 model Vehicle {
@@ -122,6 +126,7 @@ model Vehicle {
   stickerOrders StickerOrder[]
 
   @@index([ownerId])
+  @@index([createdAt])
 }
 
 model QrCode {
@@ -168,6 +173,7 @@ model Subscription {
 
   @@index([userId])
   @@index([status, endDate])
+  @@index([createdAt])
 }
 
 model OtpCode {
@@ -196,6 +202,7 @@ model ContactRequest {
 
   @@index([vehicleId])
   @@index([status])
+  @@index([createdAt])
 }
 
 model Notification {
@@ -208,6 +215,8 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@index([createdAt])
 }
 
 model ScanLog {
@@ -220,6 +229,7 @@ model ScanLog {
   createdAt    DateTime @default(now())
 
   @@index([vehicleId])
+  @@index([createdAt])
 }
 
 model EmergencyContact {
