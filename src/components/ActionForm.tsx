@@ -1,0 +1,33 @@
+"use client";
+
+import { useActionState, type ReactNode } from "react";
+import { useFormStatus } from "react-dom";
+import type { ActionResult } from "@/lib/actions";
+
+const initial: ActionResult = { ok: true };
+
+export function SubmitButton({ children, className, confirm, disabled }: { children: ReactNode; className?: string; confirm?: string; disabled?: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      className={className || "btn-primary"}
+      disabled={pending || disabled}
+      onClick={confirm ? (e) => { if (!window.confirm(confirm)) e.preventDefault(); } : undefined}
+    >
+      {pending ? "Working..." : children}
+    </button>
+  );
+}
+
+export function ActionForm({ action, children, className }: { action: (form: FormData) => Promise<ActionResult>; children: ReactNode; className?: string }) {
+  const [state, formAction] = useActionState(async (_prev: ActionResult, form: FormData) => action(form), initial);
+  return (
+    <form action={formAction} className={className}>
+      {children}
+      {state.error ? <p role="alert" className="text-red-700 text-sm mt-2">{state.error}</p> : null}
+      {state.message ? <p role="status" className="text-green-700 text-sm mt-2">{state.message}</p> : null}
+    </form>
+  );
+}
+

@@ -10,6 +10,7 @@
   },
   "description": "M-Park: Smart Vehicle Communication System. Customer Dashboard, Admin Dashboard, QR scan, OTP verification, subscriptions.",
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^24.0.0",
     "@types/qrcode": "^1.5.5",
@@ -33,7 +34,9 @@
     "db:push": "prisma db push",
     "dev": "next dev",
     "seed": "tsx prisma/seed.ts",
-    "start": "next start"
+    "start": "next start",
+    "test": "playwright test",
+    "typecheck": "tsc --noEmit"
   },
   "version": "1.0.0"
 }

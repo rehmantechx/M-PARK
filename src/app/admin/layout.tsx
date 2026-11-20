@@ -16,6 +16,9 @@ const LINKS = [
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const s = await getSession();
-  if (!s || s.role !== "ADMIN") redirect("/login?role=admin");
-  return <Shell title="Admin Dashboard" subtitle="Admin Dashboard" name={s.name} detail="Single owner account" links={LINKS}>{children}</Shell>;
+  if (!s) redirect("/login?role=admin");
+  // Wrong role lands on that role's own dashboard, never an error page
+  // and never a login page while a valid session already exists.
+  if (s.role !== "ADMIN") redirect("/customer");
+  return <Shell title="Admin Dashboard" subtitle="All customers and sticker sales" name={s.name} detail={s.phone} links={LINKS}>{children}</Shell>;
 }

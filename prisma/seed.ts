@@ -11,7 +11,7 @@ const db = new PrismaClient();
 const customers = [
   { name: "Ahmed Raza", phone: "+92 300 1234567", plate: "LEA-24-1234", make: "Toyota", model: "Corolla", year: 2022, color: "White", code: "MPK-1001", plan: "Basic Monthly", emergency: { name: "Sara Raza", phone: "+92 300 7654321", relationship: "Wife" } },
   { name: "Ayesha Khan", phone: "+92 321 7654321", plate: "ISB-22-5678", make: "Honda", model: "Civic", year: 2021, color: "Black", code: "MPK-1002", plan: "Premium Yearly", emergency: { name: "Omar Khan", phone: "+92 321 1112233", relationship: "Brother" } },
-  { name: "Bilal Ahmed", phone: "+92 333 9876543", plate: "LHR-23-9012", make: "Suzuki", model: "Alto", year: 2023, color: "Silver", code: "MPK-1003", plan: "Basic Monthly", emergency: { name: "Hassan Ahmed", phone: "+92 333 2223344", relationship: "Father" } },
+  { name: "Bilal Ahmed", phone: "+92 333 9876543", plate: "LHR-23-9012", make: "Suzuki", model: "Alto", year: 2023, color: "Silver", code: "MPK-1003", plan: "Standard Monthly", emergency: { name: "Hassan Ahmed", phone: "+92 333 2223344", relationship: "Father" } },
   { name: "Fatima Malik", phone: "+92 345 1122334", plate: "KHI-21-3456", make: "Toyota", model: "Yaris", year: 2020, color: "Grey", code: "MPK-1004", plan: "Basic Monthly", emergency: { name: "Ali Malik", phone: "+92 345 9988776", relationship: "Husband" } },
   { name: "Usman Tariq", phone: "+92 301 5566778", plate: "RWP-24-7890", make: "Honda", model: "City", year: 2022, color: "Blue", code: "MPK-1005", plan: "Basic Monthly", emergency: { name: "Zain Tariq", phone: "+92 301 4433221", relationship: "Brother" } },
   { name: "Sana Iqbal", phone: "+92 312 9988776", plate: "LEA-23-1122", make: "Suzuki", model: "Swift", year: 2021, color: "Red", code: "MPK-1006", plan: "Premium Yearly", emergency: { name: "Nida Iqbal", phone: "+92 312 6655443", relationship: "Sister" } },
@@ -23,6 +23,7 @@ const customers = [
 ];
 
 async function main() {
+  if (process.env.NODE_ENV === "production") throw new Error("Seed must never run on a live database.");
   await db.scanLog.deleteMany();
   await db.contactRequest.deleteMany();
   await db.notification.deleteMany();
@@ -55,7 +56,7 @@ async function main() {
     const isExpired = c.name === "Fatima Malik";
     const isBlocked = c.name === "Hassan Ali";
     const user = await db.user.create({ data: { role: "CUSTOMER", name: c.name, phone: c.phone, isBlocked } });
-    const vehicle = await db.vehicle.create({ data: { plate: c.plate, make: c.make, model: c.model, year: c.year, color: c.color, ownerId: user.id } });
+    await db.vehicle.create({ data: { plate: c.plate, make: c.make, model: c.model, year: c.year, color: c.color, ownerId: user.id } });
     const start = new Date("2026-11-10T00:00:00Z");
     const end = new Date(start);
     end.setMonth(end.getMonth() + plan.durationMonths);
@@ -63,7 +64,6 @@ async function main() {
     await db.subscription.create({ data: { userId: user.id, planId: plan.id, startDate: start, endDate: end, status: isExpired ? "EXPIRED" : "ACTIVE" } });
     await db.emergencyContact.create({ data: { userId: user.id, name: c.emergency.name, phone: c.emergency.phone, relationship: c.emergency.relationship } });
     await db.notification.create({ data: { userId: user.id, title: "Welcome to M-Park", body: `Your QR sticker ${c.code} is active for ${c.plate}.` } });
-    void vehicle;
   }
 
   // QR inventory: batch B-001, MPK-1001 to MPK-1050, first 9 assigned.
@@ -116,9 +116,7 @@ async function main() {
     await db.scanLog.create({ data: { vehicleId: ayeshaVehicle.id, scannerName: "Zainab Hussain", scannerPhone: "+92 321 4455667", verified: true } });
   }
 
-  console.log("Seed done. Admin login: admin@m-park.example / Admin1234!");
-  console.log("Seed done. Customer login: phone + OTP, for example +92 300 1234567");
-  console.log("Seed done. 9 customers, 9 vehicles, 100 QR codes in 2 batches, 3 plans, 1 sticker product, 2 sticker orders.");
+  console.log("Seed done. 9 customers, 9 vehicles, 100 QR codes in 2 batches, 3 plans, 1 sticker product, 2 sticker orders. Change the seeded admin password before launch.");
 }
 
 main().then(() => db.$disconnect()).catch((e) => { console.error(e); process.exit(1); });

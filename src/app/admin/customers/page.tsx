@@ -1,25 +1,44 @@
 import { db } from "@/lib/db";
-import { adminAddCustomer, adminToggleBlock } from "@/lib/actions";
+import { ActionForm, SubmitButton } from "@/components/ActionForm";
+import { adminAddCustomer, adminCustomerUpdate, adminToggleBlock } from "@/lib/actions";
+import { formatPkr } from "@/lib/format";
 
-export default async function AdminCustomers({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+const PAGE_SIZE = 100;
+
+export default async function AdminCustomers({ searchParams }: { searchParams: Promise<{ q?: string; edit?: string; page?: string }> }) {
   const params = await searchParams;
-  const q = (params.q || "").trim();
-  const customers = await db.user.findMany({
-    where: { role: "CUSTOMER", ...(q ? { OR: [{ name: { contains: q } }, { phone: { contains: q } }, { vehicles: { some: { plate: { contains: q } } } }] } : {}) },
-    include: { vehicles: { include: { qrCodes: true } }, subscriptions: { include: { plan: true }, orderBy: { createdAt: "desc" }, take: 1 } },
-    orderBy: { createdAt: "desc" },
-  });
-  const plans = await db.subscriptionPlan.findMany({ where: { isActive: true }, orderBy: { pricePkr: "asc" } });
-  const freeQr = await db.qrCode.findMany({ where: { vehicleId: null }, orderBy: { code: "asc" }, take: 50 });
+  const q = (params.q || "").trim().slice(0, 100);
+  const editId = (params.edit || "").trim();
+  // Safe parse: ?page=abc or ?page=999 must never crash the page.
+  const parsedPage = Number.parseInt(params.page || "", 10);
+  const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+  const qUpper = q.toUpperCase();
+  const where = { role: "CUSTOMER" as const, ...(q ? { OR: [{ name: { contains: q } }, { phone: { contains: q } }, { vehicles: { some: { plate: { contains: qUpper } } } }, { vehicles: { some: { qrCodes: { some: { code: { contains: qUpper } } } } } }] } : {}) };
+  const [customers, total, plans, freeQr] = await Promise.all([
+    db.user.findMany({
+      where,
+      include: { vehicles: { include: { qrCodes: { orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "asc" } }, subscriptions: { include: { plan: true }, orderBy: { createdAt: "desc" }, take: 1 } },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+    db.user.count({ where }),
+    db.subscriptionPlan.findMany({ where: { isActive: true }, orderBy: { pricePkr: "asc" } }),
+    db.qrCode.findMany({ where: { vehicleId: null, status: "ACTIVE" }, orderBy: { code: "asc" }, take: 50 }),
+  ]);
+  // Server-rendered so the input can never drift from the validation rule.
+  const maxYear = new Date().getFullYear() + 1;
+  const pageHref = (target: number) => `/admin/customers?${new URLSearchParams({ ...(q ? { q } : {}), page: String(target) }).toString()}`;
   return (
     <div>
       <div className="card">
         <h2 className="font-bold text-lg">Customers</h2>
         <p className="text-slate-600 text-sm">Manage all registered customers, plans and status. Saved in the database.</p>
-        <form method="get" className="flex gap-2 mt-4">
-          <input name="q" defaultValue={q} placeholder="Search name, phone or plate" className="input" />
+        <form method="get" className="flex gap-2 mt-4 flex-wrap">
+          <input name="q" defaultValue={q} placeholder="Search name, phone, plate or QR code" className="input flex-1 min-w-52" />
           <button className="btn-secondary" type="submit">Search</button>
         </form>
+        {q && customers.length === 0 ? <p className="text-slate-600 text-sm mt-4">No customers found for &quot;{q}&quot;.</p> : null}
         <div className="overflow-x-auto mt-4">
           <table className="w-full text-sm">
             <thead><tr className="text-left text-slate-500"><th className="py-2">Customer</th><th>Vehicle</th><th>QR code</th><th>Plan</th><th>Status</th><th>Actions</th></tr></thead>
@@ -32,35 +51,68 @@ export default async function AdminCustomers({ searchParams }: { searchParams: P
                     <td className="py-3"><p className="font-semibold">{c.name}</p><p className="text-slate-500">{c.phone}</p></td>
                     <td>{v ? <span>{v.plate}<br /><span className="text-slate-500">{v.make} {v.model} {v.year}, {v.color}</span></span> : "-"}</td>
                     <td>{v?.qrCodes[0]?.code || "-"} <span className={v?.qrCodes[0]?.status === "ACTIVE" ? "badge-green" : "badge-grey"}>{v?.qrCodes[0]?.status || ""}</span></td>
-                    <td>{sub ? <span>{sub.plan.name}<br /><span className="text-slate-500">PKR {sub.plan.pricePkr} - {sub.status}</span></span> : "No plan"}</td>
+                    <td>{sub ? <span>{sub.plan.name}<br /><span className="text-slate-500">{formatPkr(sub.plan.pricePkr)} - {sub.status}</span></span> : "No plan"}</td>
                     <td>{c.isBlocked ? <span className="badge-red">Blocked</span> : <span className="badge-green">Active</span>}</td>
                     <td>
-                      <form action={adminToggleBlock.bind(null, c.id, !c.isBlocked)}>
-                        <button className={c.isBlocked ? "btn-primary" : "btn-danger"} type="submit">{c.isBlocked ? "Unblock" : "Block"}</button>
-                      </form>
+                      <a className="btn-secondary mr-2 inline-block" href={`/admin/customers${q ? `?q=${encodeURIComponent(q)}&` : "?"}edit=${c.id}`}>Edit</a>
+                      <ActionForm action={adminToggleBlock.bind(null, c.id, !c.isBlocked)}>
+                        <SubmitButton className={c.isBlocked ? "btn-primary" : "btn-danger"} confirm={c.isBlocked ? "Unblock this customer?" : "Block this customer? They will not be able to log in."}>{c.isBlocked ? "Unblock" : "Block"}</SubmitButton>
+                      </ActionForm>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          <p className="text-slate-500 text-sm mt-2">{customers.length} customers shown.</p>
+          <p className="text-slate-500 text-sm mt-2">{customers.length} of {total} customers shown.</p>
+          {total > PAGE_SIZE ? (
+            <nav className="flex gap-2 mt-3" aria-label="Customers pagination">
+              {page > 1 ? <a className="btn-secondary" href={pageHref(page - 1)}>Previous</a> : <span className="btn-secondary opacity-40 pointer-events-none">Previous</span>}
+              <span className="btn-secondary">Page {page}</span>
+              {page * PAGE_SIZE < total ? <a className="btn-secondary" href={pageHref(page + 1)}>Next</a> : <span className="btn-secondary opacity-40 pointer-events-none">Next</span>}
+            </nav>
+          ) : null}
         </div>
       </div>
       <div className="card mt-5 max-w-2xl">
         <h3 className="font-bold">Add customer</h3>
-        <form action={adminAddCustomer} className="grid md:grid-cols-2 gap-3 mt-4">
-          <div><label className="label">Name</label><input className="input" name="name" required /></div>
-          <div><label className="label">Phone</label><input className="input" name="phone" placeholder="+92 300 0000000" required /></div>
-          <div><label className="label">Plate</label><input className="input" name="plate" required /></div>
-          <div><label className="label">Year</label><input className="input" name="year" type="number" defaultValue="2022" required /></div>
-          <div><label className="label">Make</label><input className="input" name="make" required /></div>
-          <div><label className="label">Model</label><input className="input" name="model" required /></div>
-          <div><label className="label">Color</label><input className="input" name="color" required /></div>
-          <div><label className="label">Plan</label><select className="input" name="planId">{plans.map((p) => <option key={p.id} value={p.id}>{p.name} - PKR {p.pricePkr}</option>)}</select></div>
-          <div><label className="label">QR code (unassigned)</label><select className="input" name="qrCode">{freeQr.map((x) => <option key={x.id} value={x.code}>{x.code} ({x.batch})</option>)}</select></div>
-          <button className="btn-primary md:col-span-2" type="submit">Add customer</button>
-        </form>
+        {plans.length === 0 ? <p className="text-red-700 text-sm mt-2">No active plans. Create a plan on the Subscriptions page first.</p> : null}
+        {freeQr.length === 0 ? <p className="text-red-700 text-sm mt-2">No unassigned active QR codes. Generate a batch on the QR Inventory page first.</p> : null}
+        <ActionForm action={adminAddCustomer} className="grid md:grid-cols-2 gap-3 mt-4">
+          <div><label className="label" htmlFor="add-name">Name</label><input id="add-name" className="input" name="name" maxLength={100} required /></div>
+          <div><label className="label" htmlFor="add-phone">Phone</label><input id="add-phone" className="input" name="phone" type="tel" inputMode="tel" maxLength={15} placeholder="+92 300 0000000" required /></div>
+          <div><label className="label" htmlFor="add-plate">Plate</label><input id="add-plate" className="input" name="plate" maxLength={15} required /></div>
+          <div><label className="label" htmlFor="add-year">Year</label><input id="add-year" className="input" name="year" type="number" min={1900} max={maxYear} step={1} defaultValue="2022" required /></div>
+          <div><label className="label" htmlFor="add-make">Make</label><input id="add-make" className="input" name="make" maxLength={50} required /></div>
+          <div><label className="label" htmlFor="add-model">Model</label><input id="add-model" className="input" name="model" maxLength={50} required /></div>
+          <div><label className="label" htmlFor="add-color">Color</label><input id="add-color" className="input" name="color" maxLength={30} required /></div>
+          <div><label className="label" htmlFor="add-plan">Plan</label><select id="add-plan" className="input" name="planId" required>{plans.map((p) => <option key={p.id} value={p.id}>{p.name} - {formatPkr(p.pricePkr)}</option>)}</select></div>
+          <div><label className="label" htmlFor="add-qr">QR code (unassigned)</label><select id="add-qr" className="input" name="qrCode" required>{freeQr.map((x) => <option key={x.id} value={x.code}>{x.code} ({x.batch})</option>)}</select></div>
+          <div className="md:col-span-2"><SubmitButton>Add customer</SubmitButton></div>
+        </ActionForm>
+      </div>
+      <div className="card mt-5 max-w-2xl">
+        <h3 className="font-bold">Edit a customer</h3>
+        <p className="text-slate-600 text-sm">Fix a mistyped name, phone, plate, or vehicle. Choose Edit next to a customer in the list above, change the values, and save.</p>
+        {(() => {
+          const selected = customers.find((c) => c.id === editId) || customers[0];
+          return selected ? (
+          <ActionForm action={adminCustomerUpdate} className="grid md:grid-cols-2 gap-3 mt-4">
+            <input type="hidden" name="userId" value={selected.id} />
+            <input type="hidden" name="vehicleId" value={selected.vehicles[0]?.id || ""} />
+            {/* Optimistic lock: the action only saves if the row still has this timestamp. */}
+            <input type="hidden" name="updatedAt" value={selected.updatedAt.toISOString()} />
+            <div><label className="label" htmlFor="edit-name">Name</label><input id="edit-name" className="input" name="name" defaultValue={selected.name} maxLength={100} required /></div>
+            <div><label className="label" htmlFor="edit-phone">Phone</label><input id="edit-phone" className="input" name="phone" type="tel" defaultValue={selected.phone} maxLength={15} required /></div>
+            <div><label className="label" htmlFor="edit-plate">Plate</label><input id="edit-plate" className="input" name="plate" defaultValue={selected.vehicles[0]?.plate || ""} maxLength={15} required /></div>
+            <div><label className="label" htmlFor="edit-year">Year</label><input id="edit-year" className="input" name="year" type="number" min={1900} max={maxYear} step={1} defaultValue={selected.vehicles[0]?.year || 2022} required /></div>
+            <div><label className="label" htmlFor="edit-make">Make</label><input id="edit-make" className="input" name="make" defaultValue={selected.vehicles[0]?.make || ""} maxLength={50} required /></div>
+            <div><label className="label" htmlFor="edit-model">Model</label><input id="edit-model" className="input" name="model" defaultValue={selected.vehicles[0]?.model || ""} maxLength={50} required /></div>
+            <div><label className="label" htmlFor="edit-color">Color</label><input id="edit-color" className="input" name="color" defaultValue={selected.vehicles[0]?.color || ""} maxLength={30} required /></div>
+            <div className="md:col-span-2"><SubmitButton>Save customer</SubmitButton></div>
+          </ActionForm>
+        ) : <p className="text-slate-600 text-sm mt-2">No customers yet.</p>;
+        })()}
       </div>
     </div>
   );
