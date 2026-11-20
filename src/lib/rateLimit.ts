@@ -6,6 +6,13 @@
 const hits = new Map<string, { count: number; resetAt: number }>();
 const MAX_KEYS = 1000;
 
+// x-forwarded-for can hold a comma list and can be spoofed by a direct
+// client, so use only the first entry and only as a rate limit key,
+// never as an identity.
+export function getClientIp(req: Request): string {
+  return (req.headers.get("x-forwarded-for") || "local").split(",")[0].trim().slice(0, 45) || "local";
+}
+
 export function rateLimited(key: string, max: number, windowMs: number): boolean {
   const now = Date.now();
   for (const [k, rec] of hits) {

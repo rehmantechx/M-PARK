@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { checkPassword, createSession } from "@/lib/auth";
-import { rateLimited } from "@/lib/rateLimit";
+import { getClientIp, rateLimited } from "@/lib/rateLimit";
+import { logError } from "@/lib/logger";
 
 export async function POST(req: Request) {
   try {
@@ -10,11 +11,10 @@ export async function POST(req: Request) {
     const password = String(body.password || "");
     if (!email || !password) return NextResponse.json({ ok: false, error: "Email and password are required." }, { status: 400 });
     if (email.length > 100 || password.length > 100) return NextResponse.json({ ok: false, error: "Email and password are required." }, { status: 400 });
-    // x-forwarded-for can hold a comma list and can be spoofed by a
-    // direct client, so use only the first entry and only as a rate
-    // limit key, never as an identity.
-    const ip = (req.headers.get("x-forwarded-for") || "local").split(",")[0].trim().slice(0, 45) || "local";
-    if (rateLimited(`admin-login:${ip}:${email}`, 10, 5 * 60 * 1000)) {
+    const ip = getClientIp(req);
+    // Two keys: per email so one account cannot be brute forced, and per IP
+    // as a backstop against spraying many accounts from one source.
+    if (rateLimited(`admin-login:${email}`, 10, 5 * 60 * 1000) || rateLimited(`admin-login-ip:${ip}`, 30, 5 * 60 * 1000)) {
       return NextResponse.json({ ok: false, error: "Too many login attempts. Wait 5 minutes and try again." }, { status: 429 });
     }
     const user = await db.user.findUnique({ where: { email } });
@@ -26,7 +26,8 @@ export async function POST(req: Request) {
     if (!valid) return NextResponse.json({ ok: false, error: "Wrong email or password." }, { status: 401 });
     await createSession({ id: user.id, role: "ADMIN", name: user.name, phone: user.phone });
     return NextResponse.json({ ok: true });
-  } catch {
+  } catch (e) {
+    logError("api.admin_login.failed", e);
     return NextResponse.json({ ok: false, error: "Login failed. Please try again." }, { status: 500 });
   }
 }

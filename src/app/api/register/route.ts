@@ -4,6 +4,11 @@ import { db } from "@/lib/db";
 import { verifyOtp } from "@/lib/otp";
 import { createSession } from "@/lib/auth";
 import { isValidPhone, isValidPlate, normalizePhone, parseYear, phoneVariants } from "@/lib/validate";
+import { getClientIp, rateLimited } from "@/lib/rateLimit";
+import { logError } from "@/lib/logger";
+
+// Thrown when a concurrent request claimed the same QR code first.
+class QrClaimedError extends Error {}
 
 export async function POST(req: Request) {
   try {
@@ -30,10 +35,14 @@ export async function POST(req: Request) {
     if (!/^\d{6}$/.test(otp)) return NextResponse.json({ ok: false, error: "Enter the 6 digit OTP code." }, { status: 400 });
     const phone = normalizePhone(phoneRaw);
     const plate = plateRaw;
+    if (rateLimited(`register:${getClientIp(req)}`, 50, 10 * 60 * 1000)) {
+      return NextResponse.json({ ok: false, error: "Too many registration attempts. Wait a few minutes and try again." }, { status: 429 });
+    }
     // Validate everything BEFORE burning the OTP.
     const qr = await db.qrCode.findUnique({ where: { code } });
     if (!qr) return NextResponse.json({ ok: false, error: "QR code not found in inventory." }, { status: 404 });
     if (qr.vehicleId) return NextResponse.json({ ok: false, error: "This QR code is already assigned to a vehicle." }, { status: 409 });
+    if (qr.status === "LOST") return NextResponse.json({ ok: false, error: "This QR sticker is lost. Contact M-Park for a replacement." }, { status: 409 });
     if (qr.status !== "ACTIVE") return NextResponse.json({ ok: false, error: "This QR sticker is not active. Contact M-Park." }, { status: 409 });
     if (await db.vehicle.findUnique({ where: { plate } })) {
       return NextResponse.json({ ok: false, error: "This plate is already registered." }, { status: 409 });
@@ -61,7 +70,10 @@ export async function POST(req: Request) {
       userId = u.id;
       userName = u.name;
       const vehicle = await tx.vehicle.create({ data: { plate, make, model, year: year.value as number, color, ownerId: u.id } });
-      await tx.qrCode.update({ where: { id: qr.id }, data: { vehicleId: vehicle.id, status: "ACTIVE", assignedAt: new Date() } });
+      // Claim the QR only if nobody else claimed it between our check and
+      // this transaction; a concurrent register then fails cleanly.
+      const claimed = await tx.qrCode.updateMany({ where: { id: qr.id, vehicleId: null, status: "ACTIVE" }, data: { vehicleId: vehicle.id, assignedAt: new Date() } });
+      if (claimed.count === 0) throw new QrClaimedError();
       await tx.stickerOrder.updateMany({ where: { stickerCode: code, orderStatus: { not: "ACTIVATED" } }, data: { orderStatus: "ACTIVATED", userId: u.id, vehicleId: vehicle.id } });
       const start = new Date();
       const end = new Date(start);
@@ -73,9 +85,13 @@ export async function POST(req: Request) {
     await createSession({ id: user.id, role: "CUSTOMER", name: user.name, phone });
     return NextResponse.json({ ok: true });
   } catch (e) {
+    if (e instanceof QrClaimedError) {
+      return NextResponse.json({ ok: false, error: "This QR code was just registered by someone else." }, { status: 409 });
+    }
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
       return NextResponse.json({ ok: false, error: "This phone or plate is already registered." }, { status: 409 });
     }
+    logError("api.register.failed", e);
     return NextResponse.json({ ok: false, error: "Registration failed. Please try again." }, { status: 500 });
   }
 }

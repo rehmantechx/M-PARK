@@ -3,6 +3,8 @@ import { db } from "@/lib/db";
 import { verifyOtp } from "@/lib/otp";
 import { createSession } from "@/lib/auth";
 import { isValidPhone, normalizePhone, phoneVariants } from "@/lib/validate";
+import { getClientIp, rateLimited } from "@/lib/rateLimit";
+import { logError } from "@/lib/logger";
 
 export async function POST(req: Request) {
   try {
@@ -12,6 +14,10 @@ export async function POST(req: Request) {
     if (!phoneRaw || !code) return NextResponse.json({ ok: false, error: "Phone and OTP are required." }, { status: 400 });
     if (!isValidPhone(phoneRaw)) return NextResponse.json({ ok: false, error: "Enter a valid Pakistani mobile number." }, { status: 400 });
     if (!/^\d{6}$/.test(code)) return NextResponse.json({ ok: false, error: "Enter the 6 digit OTP code." }, { status: 400 });
+    // Per IP, so guessing codes for many numbers from one source is throttled.
+    if (rateLimited(`otp-verify:${getClientIp(req)}`, 30, 60 * 1000)) {
+      return NextResponse.json({ ok: false, error: "Too many verification attempts. Wait a minute and try again." }, { status: 429 });
+    }
     const phone = normalizePhone(phoneRaw);
     const user = await db.user.findFirst({ where: { OR: phoneVariants(phone).map((v) => ({ phone: v })) } });
     if (!user || user.role !== "CUSTOMER") {
@@ -22,7 +28,8 @@ export async function POST(req: Request) {
     if (!v.ok) return NextResponse.json({ ok: false, error: v.error }, { status: 401 });
     await createSession({ id: user.id, role: "CUSTOMER", name: user.name, phone: user.phone });
     return NextResponse.json({ ok: true });
-  } catch {
+  } catch (e) {
+    logError("api.otp_verify.failed", e);
     return NextResponse.json({ ok: false, error: "Login failed. Please try again." }, { status: 500 });
   }
 }

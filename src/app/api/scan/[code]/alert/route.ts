@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { rateLimited } from "@/lib/rateLimit";
+import { logError } from "@/lib/logger";
 
 const REASONS = ["Car is blocked", "Lights are on", "Traffic blocked", "Important message"];
 
@@ -27,7 +28,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
       await tx.notification.create({ data: { userId: vehicle.ownerId, title: "M-Park Alert", body: `Anonymous alert for your car ${vehicle.plate}: ${message}` } });
     });
     return NextResponse.json({ ok: true, message: "Alert sent anonymously." });
-  } catch {
+  } catch (e) {
+    logError("api.scan_alert.failed", e);
     return NextResponse.json({ ok: false, error: "Alert failed. Please try again." }, { status: 500 });
   }
 }

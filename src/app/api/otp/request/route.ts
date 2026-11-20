@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
 import { createOtp } from "@/lib/otp";
-import { isValidPhone, normalizePhone } from "@/lib/validate";
+import { isValidPhone, normalizePhone, phoneVariants } from "@/lib/validate";
 import { rateLimited } from "@/lib/rateLimit";
+import { logError } from "@/lib/logger";
 
 export async function POST(req: Request) {
   try {
@@ -11,13 +13,23 @@ export async function POST(req: Request) {
     if (!["login", "register"].includes(purpose)) return NextResponse.json({ ok: false, error: "Invalid OTP purpose." }, { status: 400 });
     if (!isValidPhone(phoneRaw)) return NextResponse.json({ ok: false, error: "Enter a valid Pakistani mobile number, for example +92 300 1234567." }, { status: 400 });
     const phone = normalizePhone(phoneRaw);
+    // Rate limit before the account lookup, so probing which numbers exist
+    // is throttled the same way as sending codes.
     if (rateLimited(`otp:${phone}`, 5, 60 * 60 * 1000)) {
       return NextResponse.json({ ok: false, error: "Too many OTP requests for this number. Wait an hour and try again." }, { status: 429 });
+    }
+    if (purpose === "login") {
+      const user = await db.user.findFirst({ where: { OR: phoneVariants(phone).map((v) => ({ phone: v })) } });
+      if (!user || user.role !== "CUSTOMER") {
+        return NextResponse.json({ ok: false, error: "No customer account exists for this number. Register first." }, { status: 404 });
+      }
+      if (user.isBlocked) return NextResponse.json({ ok: false, error: "This account is blocked. Contact M-Park." }, { status: 403 });
     }
     const result = await createOtp(phone, purpose);
     if (!result.ok) return NextResponse.json({ ok: false, error: result.note || "Could not send OTP." }, { status: 503 });
     return NextResponse.json({ ok: true, smsSent: result.smsSent, provider: result.provider, note: result.note, devCode: result.devCode });
-  } catch {
+  } catch (e) {
+    logError("api.otp_request.failed", e);
     return NextResponse.json({ ok: false, error: "Could not send OTP. Please try again." }, { status: 500 });
   }
 }

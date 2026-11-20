@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { isValidPhone, isValidPlate, normalizePhone } from "@/lib/validate";
+import { getClientIp, rateLimited } from "@/lib/rateLimit";
+import { logError } from "@/lib/logger";
 
 // SQLite allows one writer at a time. Queue order reservations in this
 // process so concurrent orders do not time out waiting for the database.
@@ -35,6 +37,9 @@ export async function POST(req: Request) {
     const buyerPhone = normalizePhone(buyerPhoneRaw);
     const plate = plateRaw || null;
     if (plate && !isValidPlate(plate)) return NextResponse.json({ ok: false, error: "Enter a valid plate, for example LEK 7982." }, { status: 400 });
+    if (rateLimited(`order:${getClientIp(req)}`, 60, 10 * 60 * 1000)) {
+      return NextResponse.json({ ok: false, error: "Too many order attempts. Wait a few minutes and try again." }, { status: 429 });
+    }
     const product = await db.product.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" } });
     if (!product) return NextResponse.json({ ok: false, error: "Sticker sales are not open yet. Contact M-Park." }, { status: 503 });
     if (plate && (await db.vehicle.findUnique({ where: { plate } }))) {
@@ -72,7 +77,8 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ ok: false, error: "Could not reserve a QR sticker. Please try again." }, { status: 503 });
     });
-  } catch {
+  } catch (e) {
+    logError("api.order.failed", e);
     return NextResponse.json({ ok: false, error: "Order failed. Please try again." }, { status: 500 });
   }
 }
